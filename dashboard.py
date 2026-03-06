@@ -547,6 +547,7 @@ def metrics():
 
     total = len(history)
     successes = sum(1 for t in history if t.get("success"))
+    rate_limit_events = sum(1 for t in history if t.get("rate_limited"))
     success_rate = round(successes / total, 4) if total else 0.0
     avg_duration = round(sum(t.get("duration_s", 0) for t in history) / total, 2) if total else 0.0
 
@@ -594,6 +595,7 @@ def metrics():
     return jsonify({
         "total_tasks": total,
         "successes": successes,
+        "rate_limit_events": rate_limit_events,
         "success_rate": success_rate,
         "avg_duration_s": avg_duration,
         "lessons_count": lessons_count,
