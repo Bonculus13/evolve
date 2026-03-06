@@ -7,6 +7,8 @@ Usage:
   python3 orchestrator.py "your task"              # single task
   python3 orchestrator.py --auto-evolve            # continuous autonomous evolution loop
   python3 orchestrator.py --auto-evolve --cycles N # run N cycles then stop
+  python3 orchestrator.py --schedule 1h            # run evolve cycles every hour (supports s/m/h)
+  python3 orchestrator.py --schedule 1h --cycles N # scheduled mode, stop after N cycles
   python3 orchestrator.py --status                 # memory + evolution log
   python3 orchestrator.py --register-app NAME PATH TAG1,TAG2
   python3 orchestrator.py --replacement-report
@@ -236,8 +238,81 @@ def auto_evolve_loop(max_cycles: int | None = None, pause_s: int = 5):
     print_status()
 
 
+def _parse_interval(spec: str) -> int:
+    """Parse an interval string like '30s', '5m', '1h' into seconds."""
+    spec = spec.strip().lower()
+    multipliers = {"s": 1, "m": 60, "h": 3600}
+    if spec[-1] in multipliers:
+        return int(spec[:-1]) * multipliers[spec[-1]]
+    return int(spec)  # bare number = seconds
+
+
+def schedule_loop(interval_s: int, max_cycles: int | None = None):
+    """Run evolve cycles on a fixed time interval (cron-like schedule)."""
+    global _running
+    signal.signal(signal.SIGINT, _handle_sigint)
+
+    def _fmt_interval(s: int) -> str:
+        if s >= 3600 and s % 3600 == 0:
+            return f"{s // 3600}h"
+        if s >= 60 and s % 60 == 0:
+            return f"{s // 60}m"
+        return f"{s}s"
+
+    print(f"\n{'='*60}")
+    print(f"SCHEDULE MODE — every {_fmt_interval(interval_s)}, Ctrl+C to stop")
+    print(f"{'='*60}")
+
+    cycle = 0
+    while _running:
+        if max_cycles and cycle >= max_cycles:
+            print(f"\n[Done] Completed {cycle} scheduled cycles.")
+            break
+
+        cycle += 1
+        run_at = time.strftime("%H:%M:%S")
+        print(f"\n{'─'*60}")
+        print(f"[SCHEDULED CYCLE {cycle}] {run_at}")
+        print(f"{'─'*60}")
+
+        # Check task queue first
+        queued = _pop_task()
+        if queued:
+            print(f"[CYCLE TYPE] Queued task: {queued[:60]}")
+            agent.run_task(queued)
+        elif cycle % 4 == 0:
+            print("[CYCLE TYPE] Assessment")
+            agent.run_task(ASSESS_TASK)
+        else:
+            print("[CYCLE TYPE] Self-improvement")
+            agent.run_task(EVOLVE_TASK)
+
+        _auto_push(cycle)
+
+        if cycle % 5 == 0:
+            print("[GDRIVE] Syncing to Google Drive...")
+            result = profiler.sync_to_gdrive()
+            print(f"[GDRIVE] {result}")
+
+        if not _running:
+            break
+
+        if max_cycles is None or cycle < max_cycles:
+            next_run = time.time() + interval_s
+            next_str = time.strftime("%H:%M:%S", time.localtime(next_run))
+            print(f"\n[Next cycle at {next_str} — sleeping {_fmt_interval(interval_s)}]")
+            # Sleep in 1s increments so Ctrl+C is responsive
+            remaining = interval_s
+            while remaining > 0 and _running:
+                time.sleep(min(remaining, 1))
+                remaining -= 1
+
+    print(f"\n[SCHEDULE] Stopped after {cycle} cycles.")
+    print_status()
+
+
 def repl():
-    print("Evolve — enter a task, 'evolve', 'auto', 'status', or 'quit'.")
+    print("Evolve — enter a task, 'evolve', 'auto', 'schedule 1h', 'status', or 'quit'.")
     while True:
         try:
             task = input("\n> ").strip()
@@ -254,6 +329,13 @@ def repl():
             agent.run_task(EVOLVE_TASK)
         elif task.lower() == "auto":
             auto_evolve_loop()
+        elif task.lower().startswith("schedule"):
+            parts = task.split()
+            interval = parts[1] if len(parts) > 1 else "1h"
+            try:
+                schedule_loop(interval_s=_parse_interval(interval))
+            except ValueError:
+                print(f"Invalid interval: {interval}. Use e.g. 30s, 5m, 1h")
         else:
             agent.run_task(task)
 
@@ -305,6 +387,23 @@ def main():
 
         entry = portfolio.archive_app(name=name, reason=reason)
         print(f"Archived {entry['app']} -> {entry['to']}")
+        return
+
+    if "--schedule" in args:
+        idx = args.index("--schedule")
+        try:
+            interval_s = _parse_interval(args[idx + 1])
+        except (IndexError, ValueError):
+            print("Usage: --schedule INTERVAL (e.g. 30s, 5m, 1h)")
+            sys.exit(1)
+        max_cycles = None
+        if "--cycles" in args:
+            cidx = args.index("--cycles")
+            try:
+                max_cycles = int(args[cidx + 1])
+            except (IndexError, ValueError):
+                pass
+        schedule_loop(interval_s=interval_s, max_cycles=max_cycles)
         return
 
     if "--auto-evolve" in args:

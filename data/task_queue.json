@@ -1,5 +1,4 @@
 [
-  "Add a 'schedule' mode to orchestrator.py that runs evolve cycles on a cron-like schedule (e.g., every hour) using time-based checks.",
   "Create a metrics dashboard endpoint in dashboard.py at /api/metrics that returns JSON with success rate, avg duration, lessons count, and evolution count over time.",
   "Add a 'rollback' tool to tools.py that can restore a .bak file if a recent patch broke something.",
   "Improve the EVOLVE_TASK prompt to include the user's profile summary from profiler.get_profile_summary() so the agent evolves toward Jake's actual usage patterns.",
