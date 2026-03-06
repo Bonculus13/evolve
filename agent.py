@@ -483,6 +483,20 @@ def run_task(task: str, max_retries: int = TROUBLESHOOTING_RETRY_LIMIT) -> dict:
         if any_rate_limited:
             failure_notes = "rate_limited=true " + failure_notes
 
+    # Track provider effectiveness by hour to enable tool-use policy learning.
+    hour_key = datetime.now().strftime("%H")
+    mem.append_to_list(
+        "provider_outcomes",
+        {
+            "ts": time.time(),
+            "hour": hour_key,
+            "provider": selected_provider,
+            "success": success,
+            "tool_calls": len(tool_calls),
+            "duration_s": round(duration, 2),
+        },
+    )
+
     mem.record_task(
         task=task[:120],
         success=success,
@@ -507,4 +521,5 @@ def run_task(task: str, max_retries: int = TROUBLESHOOTING_RETRY_LIMIT) -> dict:
         "duration_s": duration,
         "final_response": final_text,
         "rate_limited": any_rate_limited,
+        "provider": selected_provider,
     }

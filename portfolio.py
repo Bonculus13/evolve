@@ -151,3 +151,10 @@ def render_replacement_report(report: dict[str, Any]) -> str:
         lines.append(f"  path={app['path']}")
         lines.append(f"  overlap={', '.join(app.get('overlap_tags', [])) or '(none)'}")
     return "\n".join(lines)
+
+
+def list_active_apps() -> list[dict[str, Any]]:
+    """Return active portfolio apps for pattern transfer opportunities."""
+    data = _load_portfolio()
+    apps = data.get("apps", [])
+    return [a for a in apps if a.get("status", "active") == "active"]

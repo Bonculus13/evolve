@@ -1,0 +1,8 @@
+{
+  "timestamp": 1772828828.232268,
+  "active_provider": "claude",
+  "reason": "task_succeeded",
+  "attempts": {
+    "claude": "success"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "latency_ms": [
+    795.6731
+  ],
+  "success_rate": [
+    1.0
+  ],
+  "throughput": [
+    1.0
+  ],
+  "prompt_quality": [
+    0.9595
+  ]
+}

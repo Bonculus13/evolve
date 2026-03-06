@@ -1,0 +1,55 @@
+{
+  "created_at": 1772828825.902176,
+  "goal_pack": "utility",
+  "cycle_count": 1,
+  "curriculum_stage": "aggressive_autonomy",
+  "milestone_level": 0,
+  "last_fitness": 0.9325,
+  "fitness_history": [
+    0.9325
+  ],
+  "weekly_retrospectives": [],
+  "planner": {
+    "now": [],
+    "next": [],
+    "later": [],
+    "updated_at": 0
+  },
+  "bandit": {
+    "arms": {
+      "mutate": {
+        "n": 1,
+        "reward": 0.9325
+      },
+      "assess": {
+        "n": 0,
+        "reward": 0.0
+      },
+      "stabilize": {
+        "n": 0,
+        "reward": 0.0
+      },
+      "challenge": {
+        "n": 0,
+        "reward": 0.0
+      }
+    },
+    "epsilon": 0.18
+  },
+  "regression_fingerprints": [
+    "3f522ffb507de42a9c"
+  ],
+  "capability_graph": {},
+  "tool_policy": {},
+  "benchmark": {
+    "latency_ms": [],
+    "success_rate": [],
+    "throughput": [],
+    "prompt_quality": []
+  },
+  "failure_classes": {
+    "none": 0
+  },
+  "portfolio_transfers": [],
+  "last_week_key": ""
+}

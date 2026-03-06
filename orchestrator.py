@@ -1,25 +1,16 @@
 #!/usr/bin/env python3
 """
 Evolve Orchestrator — runs on your Claude Code subscription, no API credits needed.
-
-Usage:
-  python3 orchestrator.py                          # interactive REPL
-  python3 orchestrator.py "your task"              # single task
-  python3 orchestrator.py --auto-evolve            # continuous autonomous evolution loop
-  python3 orchestrator.py --auto-evolve --cycles N # run N cycles then stop
-  python3 orchestrator.py --schedule 1h            # run evolve cycles every hour (supports s/m/h)
-  python3 orchestrator.py --schedule 1h --cycles N # scheduled mode, stop after N cycles
-  python3 orchestrator.py --status                 # memory + evolution log
-  python3 orchestrator.py --register-app NAME PATH TAG1,TAG2
-  python3 orchestrator.py --replacement-report
-  python3 orchestrator.py --archive-app NAME --reason "why"
 """
-import sys
+
+from __future__ import annotations
+
 import json
-import time
-import signal
 import os
+import signal
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -28,89 +19,54 @@ import agent
 import memory as mem
 import portfolio
 import profiler
-from config import PERMISSIONS_FILE, EVOLUTION_LOG, DATA_DIR
+from config import DATA_DIR, EVOLUTION_LOG
+from evolution_engine import EvolutionEngine, build_patch_fingerprint
 
 
 EVOLVE_TASK = """\
 You are in autonomous self-improvement mode for the evolve orchestrator at:
   /Users/jacobdieter/Projects/04_tools/evolve/
 
-Steps:
-1. Check for a pre-planned task: cat /Users/jacobdieter/Projects/04_tools/evolve/data/next_task.json 2>/dev/null
-   - If the file exists and contains a valid JSON plan, execute that plan directly.
-   - The plan will have: {"file": "<file to edit>", "change": "<description>", "verify": "<verification command>", "reason": "<why>"}
-   - After executing a pre-planned task, DELETE the file: rm /Users/jacobdieter/Projects/04_tools/evolve/data/next_task.json
-2. If no pre-planned task exists, proceed with your own judgment:
-   a. List all .py files: ls /Users/jacobdieter/Projects/04_tools/evolve/*.py
-   b. Read the files to understand the current codebase.
-   c. Identify ONE concrete, safe improvement. Good targets:
-      - Add a new capability (e.g. web search, summarization, git operations)
-      - Improve error handling or output clarity
-      - Make the evolution loop smarter (e.g. track which files changed most)
-      - Add structured logging to data/logs/
-3. Implement the change by editing the relevant file(s) directly.
-   PREFER patch_diff over patch_self: patch_diff does targeted old→new string replacement
-   and is much safer (fails immediately if old_string not found, no risk of losing file content).
-   Only use patch_self if adding a large new section or the whole file needs rewriting.
-4. Verify: cd /Users/jacobdieter/Projects/04_tools/evolve && python3 data/smoke_test.py
-5. Append a lesson to data/memory_log.jsonl:
-   python3 -c "
-import json, time
-entry = {'ts': time.time(), 'lesson': 'DESCRIBE WHAT YOU CHANGED AND WHY'}
-with open('data/memory_log.jsonl', 'a') as f: f.write(json.dumps(entry) + chr(10))
-"
+Execution target:
+- Identify one high-utility change with clear expected impact.
+- Include hypothesis, implementation, verification, and rollback note.
+- Prefer changes that improve intelligence speed, reliability, or watchability.
 
-Be decisive. Make a real, meaningful change. Avoid cosmetic edits.
+Mandatory steps:
+1. Read context and recent failures.
+2. Implement one safe, concrete improvement.
+3. Verify with: cd /Users/jacobdieter/Projects/04_tools/evolve && python3 data/smoke_test.py
+4. Write lesson to data/memory_log.jsonl with observed result and next action.
 """
 
 ASSESS_TASK = """\
-Review recent activity, research AI trends, profile the user and environment, then write a structured next-task plan:
+Assessment mode:
+1. Read recent memory + evolution logs.
+2. Update a now/next/later plan with specific technical steps.
+3. Identify weakest modules and propose one high-confidence improvement.
+4. Save structured next task into data/next_task.json.
+"""
 
-1. Read memory and recent logs:
-   tail -20 /Users/jacobdieter/Projects/04_tools/evolve/data/memory_log.jsonl 2>/dev/null
-   ls -la /Users/jacobdieter/Projects/04_tools/evolve/*.py
+STABILIZE_TASK = """\
+Stabilization mode:
+1. Focus only on hardening and regression prevention.
+2. Improve tests, guards, metrics, and failure handling.
+3. Verify smoke tests and ensure clean imports.
+"""
 
-2. Profile Jake's environment and hardware:
-   python3 -c "
-import sys; sys.path.insert(0, '/Users/jacobdieter/Projects/04_tools/evolve')
-from profiler import build_profile, get_profile_summary
-build_profile()
-print(get_profile_summary())
-"
-   Also run: system_profiler SPHardwareDataType 2>/dev/null | grep -E "Model|Processor|Memory|GPU"
-   And: ioreg -l | grep -Ei "gpu|metal|neural" 2>/dev/null | head -10
-
-3. Research latest AI developments to inform evolution direction:
-   Search for: "latest AI agent frameworks 2025 autonomous"
-   Search for: "Claude API new features tools 2025"
-   Search for: "self-improving AI code generation best practices"
-   Use WebSearch tool if available, otherwise use:
-   curl -s "https://hnrss.org/newest?q=AI+agent&count=5" 2>/dev/null | grep -o '<title>[^<]*' | head -10
-
-4. Based on Jake's profile, hardware, AI news, and past lessons — identify the most impactful next improvement.
-   Consider: Does new hardware suggest new capabilities? Do AI trends suggest better approaches?
-
-5. Write a structured plan to data/next_task.json so the next EVOLVE cycle executes it directly:
-   python3 -c "
-import json
-plan = {
-    'file': '<filename like memory.py or tools.py>',
-    'change': '<exact description of what to change>',
-    'verify': 'python3 -c \\"import tools, memory, permissions, agent, orchestrator; print(chr(79)+chr(75))\\"',
-    'reason': '<why this improves the system>'
-}
-with open('/Users/jacobdieter/Projects/04_tools/evolve/data/next_task.json', 'w') as f:
-    f.write(json.dumps(plan, indent=2))
-"
-6. Also write a summary lesson to data/memory_log.jsonl:
-   python3 -c "
-import json, time
-entry = {'ts': time.time(), 'lesson': 'NEXT IMPROVEMENT PLAN: <your plan here>'}
-with open('data/memory_log.jsonl', 'a') as f: f.write(json.dumps(entry) + chr(10))
-"
+CHALLENGE_TASK = """\
+Challenge mode (fun + exploration):
+1. You have a constrained cycle: one small patch and one strong verification.
+2. Prioritize novelty and observability.
+3. Emit clear narrative: hypothesis -> action -> result.
 """
 
 _running = True
+ENGINE = EvolutionEngine()
+LAST_RESULTS: list[bool] = []
+TASK_QUEUE_FILE = DATA_DIR / "task_queue.json"
+NEXT_TASK_FILE = DATA_DIR / "next_task.json"
+
 ORCHESTRATOR_CAPABILITY_TAGS = [
     "task_orchestration",
     "self_patch",
@@ -118,14 +74,13 @@ ORCHESTRATOR_CAPABILITY_TAGS = [
     "permissions_cache",
     "memory",
     "tool_execution",
+    "evolution_engine",
+    "fitness_optimization",
+    "timeline_visualization",
 ]
 
 
-TASK_QUEUE_FILE = DATA_DIR / "task_queue.json"
-
-
 def _pop_task() -> str | None:
-    """Pop the next task from the queue file, if any."""
     if not TASK_QUEUE_FILE.exists():
         return None
     try:
@@ -137,23 +92,6 @@ def _pop_task() -> str | None:
         return task
     except Exception:
         return None
-
-
-def _auto_push(cycle: int):
-    """Commit and push any changes after each cycle."""
-    try:
-        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, cwd=str(Path(__file__).parent)).stdout.strip()
-        if not status:
-            return
-        subprocess.run(
-            ["git", "-c", "advice.addIgnoredFile=false", "add", "-A", "--", ":!.env", ":!data/memory.json", ":!data/permissions.json", ":!data/user_profile.json", ":!data/.current_prompt.txt", ":!*.bak"],
-            cwd=str(Path(__file__).parent),
-        )
-        subprocess.run(["git", "commit", "-m", f"auto-evolve cycle {cycle}\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"], capture_output=True, cwd=str(Path(__file__).parent))
-        subprocess.run(["git", "push"], capture_output=True, cwd=str(Path(__file__).parent))
-        print(f"[GIT] Pushed changes from cycle {cycle}", flush=True)
-    except Exception as e:
-        print(f"[GIT] Push failed: {e}", flush=True)
 
 
 def _repo_dirty() -> bool:
@@ -170,6 +108,89 @@ def _repo_dirty() -> bool:
         return False
 
 
+def _head_commit() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=str(Path(__file__).parent),
+            timeout=5,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _auto_push(cycle: int) -> bool:
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            cwd=str(Path(__file__).parent),
+            timeout=8,
+        ).stdout.strip()
+        if not status:
+            return False
+
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "advice.addIgnoredFile=false",
+                "add",
+                "-A",
+                "--",
+                ":!.env",
+                ":!data/memory.json",
+                ":!data/permissions.json",
+                ":!data/user_profile.json",
+                ":!data/.current_prompt.txt",
+                ":!*.bak",
+            ],
+            cwd=str(Path(__file__).parent),
+            check=False,
+        )
+        subprocess.run(
+            [
+                "git",
+                "commit",
+                "-m",
+                f"auto-evolve cycle {cycle}\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+            ],
+            capture_output=True,
+            cwd=str(Path(__file__).parent),
+            check=False,
+        )
+        subprocess.run(["git", "push"], capture_output=True, cwd=str(Path(__file__).parent), check=False)
+        print(f"[GIT] Pushed changes from cycle {cycle}", flush=True)
+        return True
+    except Exception as e:
+        print(f"[GIT] Push failed: {e}", flush=True)
+        return False
+
+
+def _safe_rollback_if_needed(cycle: int) -> bool:
+    if not ENGINE.should_rollback(LAST_RESULTS[-8:]):
+        return False
+    try:
+        msg = f"auto-rollback cycle {cycle} due to success-rate degradation"
+        result = subprocess.run(
+            ["git", "revert", "--no-edit", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=str(Path(__file__).parent),
+            timeout=20,
+        )
+        if result.returncode == 0:
+            print(f"[ROLLBACK] {msg}")
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _handle_sigint(sig, frame):
     global _running
     print("\n\n[Stopping after current cycle — Ctrl+C again to force quit]")
@@ -177,14 +198,296 @@ def _handle_sigint(sig, frame):
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 
-def print_status():
+def _parse_interval(spec: str) -> int:
+    spec = spec.strip().lower()
+    multipliers = {"s": 1, "m": 60, "h": 3600}
+    if spec[-1] in multipliers:
+        return int(spec[:-1]) * multipliers[spec[-1]]
+    return int(spec)
+
+
+def _fmt_interval(seconds: int) -> str:
+    if seconds >= 3600 and seconds % 3600 == 0:
+        return f"{seconds // 3600}h"
+    if seconds >= 60 and seconds % 60 == 0:
+        return f"{seconds // 60}m"
+    return f"{seconds}s"
+
+
+def _task_for_cycle_type(cycle_type: str) -> tuple[str, str]:
+    if cycle_type == "assess":
+        return "assess", ASSESS_TASK
+    if cycle_type == "stabilize":
+        return "stabilize", STABILIZE_TASK
+    if cycle_type == "challenge":
+        return "challenge", CHALLENGE_TASK
+    return "mutate", EVOLVE_TASK
+
+
+def _extract_files_from_response(text: str) -> list[str]:
+    # Lightweight heuristic: learn from explicit file mentions in model output.
+    out = []
+    for token in (text or "").split():
+        tok = token.strip(".,:;()[]{}\"'")
+        if tok.endswith(".py") and "/" not in tok:
+            out.append(tok)
+    return sorted(set(out))[:8]
+
+
+def _build_horizon_plan() -> tuple[list[str], list[str], list[str]]:
+    weak = ENGINE.weakest_capabilities(top_n=6)
+    now = [
+        "Improve failure classification and adaptive retries",
+        "Increase benchmark signal quality for fitness",
+    ]
+    if weak:
+        now.append(f"Improve weak capability: {weak[0]}")
+
+    next_ = [
+        "Expand A/B mutation search space safely",
+        "Refine novelty and utility estimators",
+        "Tune bandit exploration/exploitation balance",
+        "Improve dashboard branch visualization",
+    ]
+    later = [
+        "Cross-app portfolio transfer automation",
+        "Autonomous milestone-based permission unlocks",
+        "Continuous weekly retrospective auto-actions",
+        "Long-horizon architecture mutation campaigns",
+    ]
+    return now, next_, later
+
+
+def _simulate_dry_run_guard(task: str) -> str:
+    if os.environ.get("EVOLVE_DRY_RUN", "0") != "1":
+        level = int(ENGINE.state.get("milestone_level", 0))
+        if level <= 0:
+            return task + "\n[SAFETY SCOPE] Keep patches single-file and low-risk."
+        if level == 1:
+            return task + "\n[SAFETY SCOPE] Multi-file patches allowed with explicit rollback note."
+        if level >= 2:
+            return task + "\n[SAFETY SCOPE] Broader architectural updates allowed; still require verification."
+        return task
+    guard = "\n[DRY-RUN MODE] Do not edit files. Produce an exact patch plan, risks, and verify command only."
+    return task + guard
+
+
+def _portfolio_transfer_hook() -> None:
+    # Transfer one lightweight lesson from active apps into engine memory each cycle.
+    apps = portfolio.list_active_apps()
+    if not apps:
+        return
+    sample = apps[0]
+    lesson = f"Portfolio signal from {sample.get('name')}: tags={','.join(sample.get('capability_tags', []))[:120]}"
+    ENGINE.record_portfolio_transfer(sample.get("name", "unknown"), lesson)
+
+
+def _apply_provider_policy() -> None:
+    outcomes = mem.get_all().get("provider_outcomes", [])
+    if not outcomes:
+        return
+    ranked: dict[str, list[int]] = {}
+    for row in outcomes[-300:]:
+        provider = str(row.get("provider", ""))
+        if not provider:
+            continue
+        score = 1 if row.get("success") else 0
+        ranked.setdefault(provider, []).append(score)
+    if not ranked:
+        return
+    order = sorted(
+        ranked.items(),
+        key=lambda kv: (sum(kv[1]) / max(1, len(kv[1]))),
+        reverse=True,
+    )
+    providers = ",".join([name for name, _ in order])
+    if providers:
+        os.environ["EVOLVE_PROVIDER_ORDER"] = providers
+
+
+def _run_single_cycle(cycle_number: int) -> dict:
+    _apply_provider_policy()
+    queued = _pop_task()
+    head_before = _head_commit()
+    recent_failures = ENGINE.state.get("failure_classes", {})
+    dominant_failure = "unknown"
+    if isinstance(recent_failures, dict) and recent_failures:
+        dominant_failure = max(recent_failures.items(), key=lambda kv: kv[1])[0]
+    retry_budget = ENGINE.adaptive_retry_budget(dominant_failure)
+
+    if queued:
+        cycle_type = "queued"
+        task = queued
+        trials = []
+    else:
+        cycle_type = ENGINE.choose_cycle_type(has_queued_task=False)
+        mode, base_task = _task_for_cycle_type(cycle_type)
+        weak_caps = ENGINE.weakest_capabilities(top_n=3)
+        if weak_caps:
+            base_task += (
+                "\n\nWeak capability targets (prioritize these modules first):\n- "
+                + "\n- ".join(weak_caps)
+            )
+
+        if mode == "mutate":
+            trials = ENGINE.mutation_trials(_simulate_dry_run_guard(base_task), trial_count=int(os.environ.get("EVOLVE_MAX_TRIALS", "3")))
+        else:
+            trials = [{"id": f"single_{mode}", "style": mode, "prompt": _simulate_dry_run_guard(base_task)}]
+        task = ""
+
+    if queued:
+        result = agent.run_task(task, max_retries=retry_budget)
+        chosen = {
+            "id": "queued",
+            "style": "queued",
+            "result": result,
+            "hypothesis": "Execute queued user priority task",
+            "action": "run_task(queue_item)",
+        }
+    else:
+        candidates = []
+        for t in trials:
+            hypothesis = f"Trial {t['style']} should improve {cycle_type} utility with measurable outcome"
+            confidence = ENGINE.confidence_score(hypothesis, cycle_type)
+            if confidence < 0.35:
+                continue
+
+            res = agent.run_task(t["prompt"], max_retries=retry_budget)
+            duration = float(res.get("duration_s", 0.0))
+            success = bool(res.get("success"))
+            final_text = str(res.get("final_response", ""))
+            files_changed = _extract_files_from_response(final_text)
+            novelty = ENGINE.estimate_novelty(files_changed, t["style"])
+            regression_risk = 0.45 if not success else 0.15
+            utility_est = 0.75 if success else 0.25
+            fit = ENGINE.fitness_score(success, duration, novelty, regression_risk, utility_est)
+            candidates.append(
+                {
+                    "id": t["id"],
+                    "style": t["style"],
+                    "result": res,
+                    "fitness": fit,
+                    "hypothesis": hypothesis,
+                    "action": f"run_task({t['id']})",
+                    "files": files_changed,
+                    "confidence": confidence,
+                    "novelty": novelty,
+                    "risk": regression_risk,
+                    "utility": utility_est,
+                }
+            )
+
+        if not candidates:
+            fallback = agent.run_task(_simulate_dry_run_guard(EVOLVE_TASK), max_retries=retry_budget)
+            candidates = [{
+                "id": "fallback",
+                "style": "mutate",
+                "result": fallback,
+                "fitness": ENGINE.fitness_score(bool(fallback.get("success")), float(fallback.get("duration_s", 0.0)), 0.5, 0.4, 0.5),
+                "hypothesis": "Fallback mutation attempt",
+                "action": "run_task(fallback)",
+                "files": [],
+                "confidence": 0.5,
+                "novelty": 0.5,
+                "risk": 0.4,
+                "utility": 0.5,
+            }]
+
+        chosen = max(candidates, key=lambda c: c["fitness"])
+
+    result = chosen["result"]
+    success = bool(result.get("success"))
+    duration_s = float(result.get("duration_s", 0.0))
+    final_text = str(result.get("final_response", ""))
+    files_changed = chosen.get("files") or _extract_files_from_response(final_text)
+
+    novelty = float(chosen.get("novelty", ENGINE.estimate_novelty(files_changed, chosen.get("style", ""))))
+    risk = float(chosen.get("risk", 0.2 if success else 0.6))
+    utility_est = float(chosen.get("utility", 0.7 if success else 0.2))
+    fitness = float(chosen.get("fitness", ENGINE.fitness_score(success, duration_s, novelty, risk, utility_est)))
+
+    failure_class = "none"
+    if not success:
+        failure_class = ENGINE.classify_failure(str(result.get("final_response", "")))
+
+    fingerprint = build_patch_fingerprint(files_changed, chosen.get("hypothesis", ""))
+
+    summary = ENGINE.record_cycle(
+        cycle_type="mutate" if cycle_type == "queued" else cycle_type,
+        fitness=fitness,
+        success=success,
+        files_changed=files_changed,
+        provider=str(result.get("provider", "unknown")),
+        failure_class=failure_class,
+        fingerprint=fingerprint,
+    )
+
+    now, next_, later = _build_horizon_plan()
+    ENGINE.update_planner(now, next_, later)
+
+    # Benchmark update (latency/reliability/throughput/prompt quality).
+    recent = LAST_RESULTS[-9:] + [success]
+    recent_rate = sum(1 for x in recent if x) / max(1, len(recent))
+    throughput = 1.0 / max(1.0, duration_s)
+    prompt_quality = min(1.0, 0.4 + 0.6 * fitness)
+    ENGINE.update_benchmark(duration_s * 1000.0, recent_rate, throughput, prompt_quality)
+
+    retro = ENGINE.weekly_retrospective_if_due()
+    if retro:
+        ENGINE.log_event({"ts": time.time(), "event": "weekly_retro", "retro": retro})
+
+    ENGINE.log_timeline(
+        hypothesis=chosen.get("hypothesis", ""),
+        action=chosen.get("action", ""),
+        result=f"success={success} fitness={fitness} files={','.join(files_changed)}",
+        fitness=fitness,
+        cycle_type=cycle_type,
+        branch=chosen.get("id", "single"),
+    )
+
+    # Causal metadata in memory log for learning.
+    mem.record_evolution(
+        description=f"cycle_{cycle_number}_{cycle_type}_{chosen.get('id', 'single')}",
+        files_changed=files_changed,
+        reason=f"hypothesis={chosen.get('hypothesis','')[:120]} | fitness={fitness}",
+    )
+    mem.record_causal_event(
+        hypothesis=chosen.get("hypothesis", ""),
+        expected="Increase utility and/or reliability while keeping regression risk low",
+        observed=f"success={success} fitness={fitness} files={','.join(files_changed)}",
+        fitness=fitness,
+    )
+    mem.compress_memory()
+
+    _portfolio_transfer_hook()
+
+    pushed = _auto_push(cycle_number)
+    if pushed:
+        _safe_rollback_if_needed(cycle_number)
+
+    head_after = _head_commit()
+    return {
+        "cycle": cycle_number,
+        "cycle_type": cycle_type,
+        "selected_trial": chosen.get("id", "single"),
+        "success": success,
+        "fitness": fitness,
+        "files_changed": files_changed,
+        "duration_s": duration_s,
+        "summary": summary,
+        "head_before": head_before,
+        "head_after": head_after,
+    }
+
+
+def print_status() -> None:
     print("\n=== EVOLVE STATUS ===")
     print("\n-- Memory --")
     print(mem.get_memory_context())
 
-    log_file = Path("data/memory_log.jsonl")
+    log_file = DATA_DIR / "memory_log.jsonl"
     if log_file.exists():
-        lines = log_file.read_text().strip().splitlines()
+        lines = [ln for ln in log_file.read_text().splitlines() if ln.strip()]
         print(f"\n-- Memory Log (last 5 of {len(lines)}) --")
         for line in lines[-5:]:
             try:
@@ -194,15 +497,22 @@ def print_status():
                 print(f"  {line[:100]}")
 
     if EVOLUTION_LOG.exists():
-        log = json.loads(EVOLUTION_LOG.read_text())
+        try:
+            log = json.loads(EVOLUTION_LOG.read_text())
+        except Exception:
+            log = []
         print(f"\n-- Evolution Log ({len(log)} entries) --")
         for entry in log[-3:]:
-            print(f"  [{entry.get('description')}] {entry.get('reason', '')[:80]}")
+            print(f"  [{entry.get('description')}] {entry.get('reason', '')[:100]}")
 
+    print("\n-- Engine --")
+    st = ENGINE.state
+    print(f"  goal_pack={st.get('goal_pack')} curriculum_stage={st.get('curriculum_stage')} milestone={st.get('milestone_level')}")
+    print(f"  last_fitness={st.get('last_fitness', 0):.4f} cycles={st.get('cycle_count', 0)}")
     print("=" * 20)
 
 
-def auto_evolve_loop(max_cycles: int | None = None, pause_s: int = 5):
+def auto_evolve_loop(max_cycles: int | None = None, pause_s: int = 5) -> None:
     global _running
     signal.signal(signal.SIGINT, _handle_sigint)
 
@@ -222,22 +532,16 @@ def auto_evolve_loop(max_cycles: int | None = None, pause_s: int = 5):
         print(f"[CYCLE {cycle}] {time.strftime('%H:%M:%S')}")
         print(f"{'─'*60}")
 
-        # Check task queue first
-        queued = _pop_task()
-        if queued:
-            print(f"[CYCLE TYPE] Queued task: {queued[:60]}")
-            agent.run_task(queued)
-        elif cycle % 4 == 0:
-            print("[CYCLE TYPE] Assessment")
-            agent.run_task(ASSESS_TASK)
-        else:
-            print("[CYCLE TYPE] Self-improvement")
-            agent.run_task(EVOLVE_TASK)
+        cycle_result = _run_single_cycle(cycle)
+        LAST_RESULTS.append(bool(cycle_result["success"]))
+        if len(LAST_RESULTS) > 100:
+            del LAST_RESULTS[:-100]
 
-        # Auto-commit and push after each successful cycle
-        _auto_push(cycle)
+        print(
+            f"[CYCLE RESULT] type={cycle_result['cycle_type']} trial={cycle_result['selected_trial']} "
+            f"success={cycle_result['success']} fitness={cycle_result['fitness']:.4f}"
+        )
 
-        # Sync to Google Drive every 5 cycles
         if sync_every > 0 and cycle % sync_every == 0:
             if _repo_dirty():
                 print("[GDRIVE] Syncing to Google Drive...")
@@ -260,65 +564,29 @@ def auto_evolve_loop(max_cycles: int | None = None, pause_s: int = 5):
     print_status()
 
 
-def _parse_interval(spec: str) -> int:
-    """Parse an interval string like '30s', '5m', '1h' into seconds."""
-    spec = spec.strip().lower()
-    multipliers = {"s": 1, "m": 60, "h": 3600}
-    if spec[-1] in multipliers:
-        return int(spec[:-1]) * multipliers[spec[-1]]
-    return int(spec)  # bare number = seconds
-
-
-def schedule_loop(interval_s: int, max_cycles: int | None = None):
-    """Run evolve cycles on a fixed time interval (cron-like schedule)."""
+def schedule_loop(interval_s: int, max_cycles: int | None = None) -> None:
     global _running
     signal.signal(signal.SIGINT, _handle_sigint)
-
-    def _fmt_interval(s: int) -> str:
-        if s >= 3600 and s % 3600 == 0:
-            return f"{s // 3600}h"
-        if s >= 60 and s % 60 == 0:
-            return f"{s // 60}m"
-        return f"{s}s"
 
     print(f"\n{'='*60}")
     print(f"SCHEDULE MODE — every {_fmt_interval(interval_s)}, Ctrl+C to stop")
     print(f"{'='*60}")
 
     cycle = 0
-    sync_every = int(os.environ.get("EVOLVE_GDRIVE_SYNC_EVERY", "50"))
     while _running:
         if max_cycles and cycle >= max_cycles:
             print(f"\n[Done] Completed {cycle} scheduled cycles.")
             break
 
         cycle += 1
-        run_at = time.strftime("%H:%M:%S")
         print(f"\n{'─'*60}")
-        print(f"[SCHEDULED CYCLE {cycle}] {run_at}")
+        print(f"[SCHEDULED CYCLE {cycle}] {time.strftime('%H:%M:%S')}")
         print(f"{'─'*60}")
 
-        # Check task queue first
-        queued = _pop_task()
-        if queued:
-            print(f"[CYCLE TYPE] Queued task: {queued[:60]}")
-            agent.run_task(queued)
-        elif cycle % 4 == 0:
-            print("[CYCLE TYPE] Assessment")
-            agent.run_task(ASSESS_TASK)
-        else:
-            print("[CYCLE TYPE] Self-improvement")
-            agent.run_task(EVOLVE_TASK)
-
-        _auto_push(cycle)
-
-        if sync_every > 0 and cycle % sync_every == 0:
-            if _repo_dirty():
-                print("[GDRIVE] Syncing to Google Drive...")
-                result = profiler.sync_to_gdrive()
-                print(f"[GDRIVE] {result}")
-            else:
-                print("[GDRIVE] No changes - skipping sync")
+        cycle_result = _run_single_cycle(cycle)
+        LAST_RESULTS.append(bool(cycle_result["success"]))
+        if len(LAST_RESULTS) > 100:
+            del LAST_RESULTS[:-100]
 
         if not _running:
             break
@@ -327,7 +595,6 @@ def schedule_loop(interval_s: int, max_cycles: int | None = None):
             next_run = time.time() + interval_s
             next_str = time.strftime("%H:%M:%S", time.localtime(next_run))
             print(f"\n[Next cycle at {next_str} — sleeping {_fmt_interval(interval_s)}]")
-            # Sleep in 1s increments so Ctrl+C is responsive
             remaining = interval_s
             while remaining > 0 and _running:
                 time.sleep(min(remaining, 1))
@@ -337,36 +604,49 @@ def schedule_loop(interval_s: int, max_cycles: int | None = None):
     print_status()
 
 
-def repl():
-    print("Evolve — enter a task, 'evolve', 'auto', 'schedule 1h', 'status', or 'quit'.")
+def repl() -> None:
+    print("Evolve — enter a task, 'evolve', 'auto', 'schedule 1h', 'goal <name>', 'status', or 'quit'.")
     while True:
         try:
             task = input("\n> ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nBye.")
             break
+
         if not task:
             continue
-        if task.lower() in ("quit", "exit", "q"):
+        lower = task.lower()
+
+        if lower in ("quit", "exit", "q"):
             break
-        if task.lower() == "status":
+        if lower == "status":
             print_status()
-        elif task.lower() == "evolve":
-            agent.run_task(EVOLVE_TASK)
-        elif task.lower() == "auto":
+            continue
+        if lower == "evolve":
+            _run_single_cycle(ENGINE.state.get("cycle_count", 0) + 1)
+            continue
+        if lower == "auto":
             auto_evolve_loop()
-        elif task.lower().startswith("schedule"):
+            continue
+        if lower.startswith("schedule"):
             parts = task.split()
             interval = parts[1] if len(parts) > 1 else "1h"
             try:
                 schedule_loop(interval_s=_parse_interval(interval))
             except ValueError:
                 print(f"Invalid interval: {interval}. Use e.g. 30s, 5m, 1h")
-        else:
-            agent.run_task(task)
+            continue
+        if lower.startswith("goal "):
+            _, goal_name = task.split(" ", 1)
+            selected = ENGINE.set_goal_pack(goal_name.strip())
+            print(f"Goal pack set to: {selected}")
+            continue
+
+        result = agent.run_task(task)
+        LAST_RESULTS.append(bool(result.get("success")))
 
 
-def main():
+def main() -> None:
     args = sys.argv[1:]
 
     if not args:
@@ -375,6 +655,16 @@ def main():
 
     if "--status" in args:
         print_status()
+        return
+
+    if "--goal-pack" in args:
+        idx = args.index("--goal-pack")
+        try:
+            goal_name = args[idx + 1]
+        except (IndexError, ValueError):
+            print("Usage: --goal-pack <utility|speed|autonomy|fun_demo>")
+            sys.exit(1)
+        print(f"Goal pack set to: {ENGINE.set_goal_pack(goal_name)}")
         return
 
     if "--register-app" in args:
@@ -400,7 +690,7 @@ def main():
         try:
             name = args[idx + 1]
         except (IndexError, ValueError):
-            print("Usage: --archive-app NAME --reason \"why\"")
+            print('Usage: --archive-app NAME --reason "why"')
             sys.exit(1)
 
         reason = "replaced by evolve orchestrator"
@@ -422,6 +712,7 @@ def main():
         except (IndexError, ValueError):
             print("Usage: --schedule INTERVAL (e.g. 30s, 5m, 1h)")
             sys.exit(1)
+
         max_cycles = None
         if "--cycles" in args:
             cidx = args.index("--cycles")
@@ -451,12 +742,12 @@ def main():
         return
 
     if "--evolve" in args:
-        agent.run_task(EVOLVE_TASK)
+        _run_single_cycle(ENGINE.state.get("cycle_count", 0) + 1)
         return
 
     task = " ".join(a for a in args if not a.startswith("--"))
     result = agent.run_task(task)
-    sys.exit(0 if result["success"] else 1)
+    sys.exit(0 if result.get("success") else 1)
 
 
 if __name__ == "__main__":

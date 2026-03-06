@@ -18,11 +18,13 @@ from flask import Flask, jsonify, request, Response
 sys.path.insert(0, str(Path(__file__).parent))
 from config import DATA_DIR, EVOLUTION_LOG, SOURCE_DIR
 import memory as mem
+from evolution_engine import EvolutionEngine, TIMELINE_FILE
 
 app = Flask(__name__)
 PORT = 7842
 _dashboard_start_ts = time.time()
 PROVIDER_STATE_FILE = DATA_DIR / "provider_status.json"
+DASH_ENGINE = EvolutionEngine()
 
 # Shared state
 _state = {
@@ -112,6 +114,12 @@ textarea { height: 60px; resize: vertical; }
       <button class="btn" onclick="syncGDrive()">☁ Sync GDrive</button>
       <button class="btn" onclick="refreshProfile()">👤 Profile</button>
     </div>
+    <div style="margin-top:10px">
+      <button class="btn" onclick="setGoalPack('utility')">Goal: Utility</button>
+      <button class="btn" onclick="setGoalPack('speed')">Goal: Speed</button>
+      <button class="btn" onclick="setGoalPack('autonomy')">Goal: Autonomy</button>
+      <button class="btn" onclick="setGoalPack('fun_demo')">Goal: Fun Demo</button>
+    </div>
   </div>
 
   <!-- Task Queue -->
@@ -143,6 +151,12 @@ textarea { height: 60px; resize: vertical; }
   <div class="card">
     <h2>Evolution Log</h2>
     <div id="evo-log" class="memory-block">Loading...</div>
+  </div>
+
+  <!-- Evolution Timeline -->
+  <div class="card full">
+    <h2>Evolution Timeline (Hypothesis → Action → Result)</h2>
+    <div id="timeline-log" class="memory-block">Loading...</div>
   </div>
 
   <!-- Files -->
@@ -225,6 +239,11 @@ async function loadMemory() {
   document.getElementById('evo-log').textContent = data.evo_log;
 }
 
+async function loadTimeline() {
+  const data = await api('/api/timeline');
+  document.getElementById('timeline-log').textContent = data.timeline || 'No timeline yet.';
+}
+
 function escHtml(t) {
   return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
@@ -248,6 +267,10 @@ async function queueTask() {
 }
 async function runNextTask() { await api('/api/run_next', 'POST'); }
 async function removeTask(i) { await api('/api/queue/' + i, 'DELETE'); }
+async function setGoalPack(name) {
+  const r = await api('/api/goal_pack', 'POST', {goal_pack: name});
+  alert('Goal pack: ' + r.goal_pack);
+}
 function clearLog() {
   document.getElementById('log').innerHTML = '';
   lastLogLen = 0;
@@ -273,9 +296,11 @@ async function loadFiles() {
 // Poll every 2s, memory every 10s, files every 15s
 setInterval(poll, 2000);
 setInterval(loadMemory, 10000);
+setInterval(loadTimeline, 10000);
 setInterval(loadFiles, 15000);
 poll();
 loadMemory();
+loadTimeline();
 loadFiles();
 </script>
 </body>
@@ -305,12 +330,13 @@ def _get_stats() -> dict:
 
 
 def _start_loop(task_override: str | None = None):
-    """Launch orchestrator as subprocess, capture output to a temp log file."""
-    import tempfile
+    """Launch orchestrator as subprocess, capture output to session-local log file."""
     if _state["proc"] and _state["proc"].poll() is None:
         return  # already running
 
-    log_f = tempfile.mktemp(suffix=".log", prefix="evolve_")
+    logs_dir = DATA_DIR / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_f = str(logs_dir / f"dashboard_runtime_{int(time.time())}.log")
     _state["log_file"] = log_f
 
     env = {k: v for k, v in os.environ.items()
@@ -344,8 +370,10 @@ def index():
 
 @app.route("/api/status")
 def status():
+    DASH_ENGINE.reload()
     stats = _get_stats()
     log = _get_log()
+    _state["cycle"] = int(DASH_ENGINE.state.get("cycle_count", _state.get("cycle", 0)))
     provider = {}
     if PROVIDER_STATE_FILE.exists():
         try:
@@ -358,6 +386,12 @@ def status():
         "log": log,
         "queue": _state["task_queue"],
         "provider": provider,
+        "engine": {
+            "goal_pack": DASH_ENGINE.get_goal_pack(),
+            "last_fitness": DASH_ENGINE.state.get("last_fitness", 0.0),
+            "curriculum_stage": DASH_ENGINE.state.get("curriculum_stage", "unknown"),
+            "milestone_level": DASH_ENGINE.state.get("milestone_level", 0),
+        },
         **stats,
     })
 
@@ -409,6 +443,7 @@ def run_next():
 
 @app.route("/api/memory")
 def memory():
+    DASH_ENGINE.reload()
     context = mem.get_memory_context()
     evo_log = ""
     if EVOLUTION_LOG.exists():
@@ -422,6 +457,34 @@ def memory():
         except Exception:
             evo_log = "Error reading evolution log."
     return jsonify({"context": context, "evo_log": evo_log})
+
+
+@app.route("/api/timeline")
+def timeline():
+    DASH_ENGINE.reload()
+    if not TIMELINE_FILE.exists():
+        return jsonify({"timeline": "No timeline events yet."})
+    try:
+        rows = [json.loads(line) for line in TIMELINE_FILE.read_text().splitlines() if line.strip()]
+    except Exception:
+        return jsonify({"timeline": "Unable to read timeline log."})
+    lines = []
+    for r in rows[-20:]:
+        ts = time.strftime("%m-%d %H:%M:%S", time.localtime(r.get("ts", 0)))
+        lines.append(
+            f"[{ts}] ({r.get('cycle_type','?')}/{r.get('branch','?')}) "
+            f"H: {r.get('hypothesis','')[:100]} | "
+            f"A: {r.get('action','')[:70]} | "
+            f"R: {r.get('result','')[:120]}"
+        )
+    return jsonify({"timeline": "\n".join(lines) if lines else "No timeline events yet."})
+
+
+@app.route("/api/goal_pack", methods=["POST"])
+def set_goal_pack():
+    goal = request.json.get("goal_pack", "").strip()
+    selected = DASH_ENGINE.set_goal_pack(goal)
+    return jsonify({"ok": True, "goal_pack": selected})
 
 
 @app.route("/api/gdrive_sync", methods=["POST"])

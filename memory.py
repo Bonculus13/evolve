@@ -42,7 +42,28 @@ def append_to_list(key: str, item):
     if key in {"learned_patterns", "persistent_notes"} and item in lst:
         return
     lst.append(item)
+    if key in {"task_history", "provider_outcomes", "causal_log"} and len(lst) > 1000:
+        lst = lst[-1000:]
     data[key] = lst
+    _save_file(MEMORY_FILE, data)
+
+
+def compress_memory():
+    """Prune low-signal repetition while keeping recent/high-signal context."""
+    data = get_all()
+    patterns = data.get("learned_patterns", [])
+    deduped_patterns = []
+    seen = set()
+    for p in patterns:
+        key = str(p).strip().lower()[:120]
+        if key and key not in seen:
+            seen.add(key)
+            deduped_patterns.append(p)
+    data["learned_patterns"] = deduped_patterns[-100:]
+    for key in ("task_history", "provider_outcomes", "causal_log"):
+        seq = data.get(key, [])
+        if isinstance(seq, list) and len(seq) > 1000:
+            data[key] = seq[-1000:]
     _save_file(MEMORY_FILE, data)
 
 
@@ -78,6 +99,20 @@ def record_evolution(description: str, files_changed: list[str], reason: str):
         "reason": reason,
     })
     _save_file(EVOLUTION_LOG, data)
+
+
+def record_causal_event(hypothesis: str, expected: str, observed: str, fitness: float):
+    """Store causal patch metadata to improve future planning decisions."""
+    append_to_list(
+        "causal_log",
+        {
+            "timestamp": time.time(),
+            "hypothesis": hypothesis[:240],
+            "expected": expected[:240],
+            "observed": observed[:320],
+            "fitness": round(float(fitness), 4),
+        },
+    )
 
 
 def get_efficiency_summary() -> str:
@@ -231,5 +266,15 @@ def get_memory_context() -> str:
     notes = data.get("persistent_notes", [])
     if notes:
         sections.append("## Persistent Notes\n" + "\n".join(f"- {n}" for n in notes[-10:]))
+
+    causal = data.get("causal_log", [])
+    if causal:
+        lines = []
+        for c in causal[-6:]:
+            ts = time.strftime("%m-%d %H:%M", time.localtime(c.get("timestamp", 0)))
+            lines.append(
+                f"- [{ts}] fit={c.get('fitness', 0):.2f} h={c.get('hypothesis', '')[:80]} -> {c.get('observed', '')[:90]}"
+            )
+        sections.append("## Causal Metadata\n" + "\n".join(lines))
 
     return "\n\n".join(sections) if sections else "No prior memory."
