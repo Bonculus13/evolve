@@ -22,6 +22,7 @@ import memory as mem
 app = Flask(__name__)
 PORT = 7842
 _dashboard_start_ts = time.time()
+PROVIDER_STATE_FILE = DATA_DIR / "provider_status.json"
 
 # Shared state
 _state = {
@@ -99,6 +100,10 @@ textarea { height: 60px; resize: vertical; }
       <div class="stat-box"><div class="stat" id="stat-success">0</div><div class="stat-label">Successes</div></div>
       <div class="stat-box"><div class="stat" id="stat-evolutions">0</div><div class="stat-label">Evolutions</div></div>
       <div class="stat-box"><div class="stat" id="stat-uptime">0s</div><div class="stat-label">Uptime</div></div>
+    </div>
+    <div style="margin-top:10px;font-size:0.82em;color:#9aa">
+      Provider: <span id="provider-active">unknown</span>
+      <span id="provider-reason" style="margin-left:8px;color:#777"></span>
     </div>
     <div style="margin-top:12px">
       <button class="btn primary" onclick="startAuto()">▶ Auto-Evolve</button>
@@ -185,6 +190,10 @@ async function poll() {
   document.getElementById('stat-cycle').textContent = data.cycle;
   document.getElementById('stat-success').textContent = data.successes;
   document.getElementById('stat-evolutions').textContent = data.evolutions;
+  document.getElementById('provider-active').textContent =
+    (data.provider && data.provider.active_provider) ? data.provider.active_provider : 'unknown';
+  document.getElementById('provider-reason').textContent =
+    (data.provider && data.provider.reason) ? '(' + data.provider.reason + ')' : '';
   if (data.running && !startTime) startTime = Date.now();
   if (!data.running) startTime = null;
   if (startTime) {
@@ -337,11 +346,18 @@ def index():
 def status():
     stats = _get_stats()
     log = _get_log()
+    provider = {}
+    if PROVIDER_STATE_FILE.exists():
+        try:
+            provider = json.loads(PROVIDER_STATE_FILE.read_text())
+        except Exception:
+            provider = {}
     return jsonify({
         "running": _state["running"],
         "cycle": _state["cycle"],
         "log": log,
         "queue": _state["task_queue"],
+        "provider": provider,
         **stats,
     })
 
