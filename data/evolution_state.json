@@ -1,10 +1,10 @@
 {
   "created_at": 1772828825.902176,
   "goal_pack": "utility",
-  "cycle_count": 15,
-  "curriculum_stage": "aggressive_autonomy",
+  "cycle_count": 16,
+  "curriculum_stage": "architecture",
   "milestone_level": 3,
-  "last_fitness": 0.4625,
+  "last_fitness": 0.4568,
   "fitness_history": [
     0.9325,
     0.9325,
@@ -20,7 +20,8 @@
     0.4625,
     0.4625,
     0.4625,
-    0.4625
+    0.4625,
+    0.4568
   ],
   "weekly_retrospectives": [
     {
@@ -54,8 +55,8 @@
   "bandit": {
     "arms": {
       "mutate": {
-        "n": 3,
-        "reward": 2.7975
+        "n": 4,
+        "reward": 3.2542999999999997
       },
       "assess": {
         "n": 3,
@@ -136,7 +137,8 @@
   },
   "failure_classes": {
     "none": 0,
-    "auth": 5
+    "auth": 5,
+    "unknown": 1
   },
   "portfolio_transfers": [],
   "last_week_key": "2026-W10"

@@ -303,7 +303,11 @@ def _apply_provider_policy() -> None:
     )
     providers = ",".join([name for name, _ in order])
     if providers:
-        os.environ["EVOLVE_PROVIDER_ORDER"] = providers
+        ranked = [p for p in providers.split(",") if p]
+        for fallback in ("codex", "gemini", "claude"):
+            if fallback not in ranked:
+                ranked.append(fallback)
+        os.environ["EVOLVE_PROVIDER_ORDER"] = ",".join(ranked)
 
 
 def _auth_guard_active() -> bool:

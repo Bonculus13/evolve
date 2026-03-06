@@ -80,6 +80,8 @@ _AUTH_FAILURE_PATTERNS = [
     "authentication",
     "auth required",
     "login required",
+    "opening authentication page in your browser",
+    "do you want to continue?",
 ]
 
 DEFAULT_PROVIDER_ORDER = ["claude", "gemini", "codex"]
@@ -128,6 +130,13 @@ def _is_rate_limit_error(stderr: str, output_lines: list) -> bool:
 def _is_auth_failure(stderr: str, output_lines: list, final_text: str = "") -> bool:
     text = (stderr + " " + " ".join(output_lines[-8:]) + " " + (final_text or "")).lower()
     return any(p in text for p in _AUTH_FAILURE_PATTERNS)
+
+
+def _is_hard_provider_failure(stderr: str, output_lines: list, provider: str) -> bool:
+    text = (stderr + " " + " ".join(output_lines[-20:])).lower()
+    if provider == "codex" and "reqwest-internal-sync-runtime" in text and "panicked" in text:
+        return True
+    return False
 
 
 def _extract_reset_cooldown_seconds(text: str) -> int | None:
@@ -378,9 +387,12 @@ def _run_once(prompt: str, env: dict, label: str = "", provider: str = "claude")
             # After rate limit retries, return whatever we have
             break
 
-        # If subprocess succeeded (even if task failed), or we exhausted retries, return
+        # If auth/hard provider failure occurs, avoid expensive local retries.
         if _is_auth_failure(stderr, output_lines, final_text):
             break
+        if _is_hard_provider_failure(stderr, output_lines, provider):
+            break
+        # If subprocess succeeded (even if task failed), or we exhausted retries, return
         if not subprocess_failed or cli_attempt >= CLI_RETRY_LIMIT:
             break
 
