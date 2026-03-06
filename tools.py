@@ -161,6 +161,27 @@ TOOL_DEFS = [
             "required": ["message"],
         },
     },
+    {
+        "name": "summarize_changes",
+        "description": (
+            "Get a human-readable summary of recent git changes. "
+            "Combines git log (recent commits) and git diff (uncommitted changes) "
+            "into a concise overview. Useful for understanding what has changed recently."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "num_commits": {
+                    "type": "integer",
+                    "description": "Number of recent commits to include (default 10)",
+                },
+                "include_diff": {
+                    "type": "boolean",
+                    "description": "Include uncommitted diff in the summary (default true)",
+                },
+            },
+        },
+    },
 ]
 
 
@@ -205,6 +226,8 @@ def execute(tool_name: str, tool_input: dict, tool_use_id: str,
             return _http_get(tool_input, tool_use_id)
         elif tool_name == "git_auto_commit":
             return _git_auto_commit(tool_input, tool_use_id, intervention_counter)
+        elif tool_name == "summarize_changes":
+            return _summarize_changes(tool_input, tool_use_id)
         else:
             return ToolResult(tool_use_id, f"Unknown tool: {tool_name}", is_error=True)
     except Exception as e:
@@ -388,6 +411,60 @@ def _http_get(inp: dict, tid: str) -> ToolResult:
         return ToolResult(tid, f"URL error: {e.reason}", is_error=True)
     except Exception as e:
         return ToolResult(tid, f"http_get failed: {e}", is_error=True)
+
+
+def _summarize_changes(inp: dict, tid: str) -> ToolResult:
+    num_commits = inp.get("num_commits", 10)
+    include_diff = inp.get("include_diff", True)
+    sections = []
+
+    try:
+        # Recent commits
+        log_result = subprocess.run(
+            ["git", "log", f"--max-count={num_commits}",
+             "--format=%h %ad %s", "--date=short"],
+            capture_output=True, text=True, timeout=15, cwd=str(SOURCE_DIR)
+        )
+        if log_result.returncode == 0 and log_result.stdout.strip():
+            sections.append(f"=== Recent Commits (last {num_commits}) ===\n{log_result.stdout.strip()}")
+        else:
+            sections.append("=== Recent Commits ===\n(no commits found)")
+
+        # Files changed in those commits
+        shortstat = subprocess.run(
+            ["git", "diff", "--stat", f"HEAD~{num_commits}..HEAD"],
+            capture_output=True, text=True, timeout=15, cwd=str(SOURCE_DIR)
+        )
+        if shortstat.returncode == 0 and shortstat.stdout.strip():
+            sections.append(f"=== Files Changed (last {num_commits} commits) ===\n{shortstat.stdout.strip()}")
+
+        if include_diff:
+            # Uncommitted staged changes
+            staged = subprocess.run(
+                ["git", "diff", "--cached", "--stat"],
+                capture_output=True, text=True, timeout=15, cwd=str(SOURCE_DIR)
+            )
+            # Uncommitted unstaged changes
+            unstaged = subprocess.run(
+                ["git", "diff", "--stat"],
+                capture_output=True, text=True, timeout=15, cwd=str(SOURCE_DIR)
+            )
+
+            working_parts = []
+            if staged.returncode == 0 and staged.stdout.strip():
+                working_parts.append(f"Staged:\n{staged.stdout.strip()}")
+            if unstaged.returncode == 0 and unstaged.stdout.strip():
+                working_parts.append(f"Unstaged:\n{unstaged.stdout.strip()}")
+
+            if working_parts:
+                sections.append("=== Uncommitted Changes ===\n" + "\n\n".join(working_parts))
+            else:
+                sections.append("=== Uncommitted Changes ===\n(working tree clean)")
+
+        _log_action("summarize_changes", f"commits={num_commits}")
+        return ToolResult(tid, "\n\n".join(sections))
+    except subprocess.TimeoutExpired:
+        return ToolResult(tid, "[ERROR] git operation timed out", is_error=True)
 
 
 def _git_auto_commit(inp: dict, tid: str, counter: list) -> ToolResult:

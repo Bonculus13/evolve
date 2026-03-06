@@ -137,6 +137,21 @@ textarea { height: 60px; resize: vertical; }
     <div id="evo-log" class="memory-block">Loading...</div>
   </div>
 
+  <!-- Files -->
+  <div class="card full">
+    <h2>Files</h2>
+    <div id="files-list" style="max-height:300px;overflow-y:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:0.82em">
+        <thead><tr style="color:#888;text-align:left;border-bottom:1px solid #2a2a2a">
+          <th style="padding:6px 8px">Name</th>
+          <th style="padding:6px 8px;text-align:right">Size</th>
+          <th style="padding:6px 8px;text-align:right">Modified</th>
+        </tr></thead>
+        <tbody id="files-tbody"><tr><td colspan="3" style="padding:8px;color:#444">Loading...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -227,11 +242,29 @@ function clearLog() {
   api('/api/clear_log', 'POST');
 }
 
-// Poll every 2s, memory every 10s
+async function loadFiles() {
+  const data = await api('/api/files');
+  const tbody = document.getElementById('files-tbody');
+  if (!data.files || data.files.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" style="padding:8px;color:#444">No files found</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.files.map(f =>
+    `<tr style="border-bottom:1px solid #1e1e1e">
+      <td style="padding:4px 8px;color:#4ec9b0">${escHtml(f.name)}</td>
+      <td style="padding:4px 8px;text-align:right">${f.size}</td>
+      <td style="padding:4px 8px;text-align:right;color:#888">${escHtml(f.modified)}</td>
+    </tr>`
+  ).join('');
+}
+
+// Poll every 2s, memory every 10s, files every 15s
 setInterval(poll, 2000);
 setInterval(loadMemory, 10000);
+setInterval(loadFiles, 15000);
 poll();
 loadMemory();
+loadFiles();
 </script>
 </body>
 </html>
@@ -384,6 +417,28 @@ def profile():
     from profiler import build_profile, get_profile_summary
     build_profile()
     return jsonify({"summary": get_profile_summary()})
+
+
+@app.route("/api/files")
+def files():
+    """Return source files with size and last-modified timestamp."""
+    result = []
+    for p in sorted(SOURCE_DIR.rglob("*.py")):
+        if p.name.startswith(".") or "__pycache__" in str(p):
+            continue
+        try:
+            st = p.stat()
+            size_b = st.st_size
+            if size_b >= 1024:
+                size_str = f"{size_b / 1024:.1f} KB"
+            else:
+                size_str = f"{size_b} B"
+            mod = time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime))
+            rel = str(p.relative_to(SOURCE_DIR))
+            result.append({"name": rel, "size": size_str, "modified": mod})
+        except OSError:
+            continue
+    return jsonify({"files": result})
 
 
 @app.route("/api/clear_log", methods=["POST"])
