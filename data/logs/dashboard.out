@@ -1,0 +1,6 @@
+ * Tip: There are .env files present. Install python-dotenv to use them.
+[Dashboard] Starting at http://localhost:7842
+ * Serving Flask app 'dashboard'
+ * Debug mode: off
+Operation not permitted
+5:15: syntax error: A “"” can’t go after this identifier. (-2740)
