@@ -236,6 +236,12 @@ def _run_once(prompt: str, env: dict, label: str = "", provider: str = "claude")
             stderr = proc.stderr.read()
             proc.wait()
 
+            if not success and proc.returncode == 0 and output_lines:
+                # Some CLIs return successful plain/JSON lines without a "result.success" event.
+                if not final_text:
+                    final_text = output_lines[-1][:1000]
+                success = True
+
             if proc.returncode not in (0, None) and not success:
                 print(f"[ERROR] {provider} exited {proc.returncode}")
                 if stderr:
