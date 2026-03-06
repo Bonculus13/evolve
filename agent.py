@@ -53,6 +53,23 @@ def _build_prompt(task: str) -> str:
 CLI_RETRY_LIMIT = 2
 CLI_RETRY_DELAY = 5
 
+RATE_LIMIT_BACKOFFS = [5, 15, 45]  # exponential backoff delays in seconds
+
+_RATE_LIMIT_PATTERNS = [
+    "rate limit",
+    "rate_limit",
+    "429",
+    "too many requests",
+    "overloaded",
+    "capacity",
+]
+
+
+def _is_rate_limit_error(stderr: str, output_lines: list) -> bool:
+    """Check if the error is a rate limit / overload error."""
+    text = (stderr + " " + " ".join(output_lines[-5:])).lower()
+    return any(p in text for p in _RATE_LIMIT_PATTERNS)
+
 
 def _run_once(prompt: str, env: dict, label: str = "") -> tuple[bool, list, list, str, object, str]:
     """Run claude CLI with prompt. Returns (success, output_lines, tool_calls, final_text, proc, stderr).
@@ -151,6 +168,78 @@ def _run_once(prompt: str, env: dict, label: str = "") -> tuple[bool, list, list
         except Exception as e:
             print(f"[ERROR] {e}")
             subprocess_failed = True
+
+        # Check for rate limit errors — these get their own exponential backoff
+        if (subprocess_failed or not success) and _is_rate_limit_error(stderr, output_lines):
+            for rl_attempt, delay in enumerate(RATE_LIMIT_BACKOFFS):
+                print(f"[AGENT] Rate limit detected — backing off {delay}s "
+                      f"(attempt {rl_attempt + 1}/{len(RATE_LIMIT_BACKOFFS)})...", flush=True)
+                time.sleep(delay)
+                success, output_lines, tool_calls, final_text, proc, stderr = (
+                    False, [], [], "", None, ""
+                )
+                try:
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        env=env,
+                        cwd=str(SOURCE_DIR),
+                    )
+                    proc.stdin.write(prompt)
+                    proc.stdin.close()
+                    for raw_line in proc.stdout:
+                        raw_line = raw_line.strip()
+                        if not raw_line:
+                            continue
+                        output_lines.append(raw_line)
+                        try:
+                            event = json.loads(raw_line)
+                        except json.JSONDecodeError:
+                            print(f"  {raw_line}")
+                            continue
+                        etype = event.get("type", "")
+                        if etype == "assistant":
+                            content = event.get("message", {}).get("content", [])
+                            for block in content:
+                                if isinstance(block, dict):
+                                    if block.get("type") == "text":
+                                        txt = block.get("text", "").strip()
+                                        if txt:
+                                            print(f"\n[Claude] {txt[:500]}", flush=True)
+                                            final_text = txt
+                                    elif block.get("type") == "tool_use":
+                                        name = block.get("name", "")
+                                        inp = block.get("input", {})
+                                        summary = str(inp)[:120]
+                                        print(f"[TOOL] {name}({summary})", flush=True)
+                                        tool_calls.append(name)
+                        elif etype == "result":
+                            result_type = event.get("subtype", "")
+                            if result_type == "success":
+                                final_text = event.get("result", "")
+                                print(f"\n[RESULT] {final_text[:300]}", flush=True)
+                                success = True
+                            elif result_type == "error_max_turns":
+                                print("[WARN] Max turns reached — task incomplete, marking as failure")
+                            else:
+                                print(f"[RESULT] {event}")
+                    stderr = proc.stderr.read()
+                    proc.wait()
+                    if proc.returncode not in (0, None) and not success:
+                        print(f"[ERROR] claude exited {proc.returncode}")
+                        if stderr:
+                            print(f"  stderr: {stderr[:300]}")
+                except Exception as e:
+                    print(f"[ERROR] {e}")
+
+                # If succeeded or no longer a rate limit error, stop backing off
+                if success or not _is_rate_limit_error(stderr, output_lines):
+                    break
+            # After rate limit retries, return whatever we have
+            break
 
         # If subprocess succeeded (even if task failed), or we exhausted retries, return
         if not subprocess_failed or cli_attempt >= CLI_RETRY_LIMIT:
