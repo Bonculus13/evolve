@@ -6,11 +6,15 @@ import os
 import time
 import subprocess
 import json
+import shutil
 from pathlib import Path
 import memory as mem
 from config import SOURCE_DIR, MAX_ITERATIONS
 
 CLAUDE_BIN = os.path.expanduser("~/.npm-global/bin/claude")
+GEMINI_BIN = os.path.expanduser("~/.npm-global/bin/gemini")
+CODEX_BIN = os.path.expanduser("~/.npm-global/bin/codex")
+PROVIDER_STATE_FILE = SOURCE_DIR / "data" / "provider_status.json"
 
 # System context prepended to every task prompt
 SYSTEM_CONTEXT = """\
@@ -62,7 +66,45 @@ _RATE_LIMIT_PATTERNS = [
     "too many requests",
     "overloaded",
     "capacity",
+    "hit your limit",
+    "usage limit",
+    "quota",
+    "resets",
 ]
+
+DEFAULT_PROVIDER_ORDER = ["claude", "gemini", "codex"]
+
+
+def _provider_order() -> list[str]:
+    raw = os.environ.get("EVOLVE_PROVIDER_ORDER", "").strip()
+    if not raw:
+        return DEFAULT_PROVIDER_ORDER
+    parsed = [p.strip().lower() for p in raw.split(",") if p.strip()]
+    return [p for p in parsed if p in {"claude", "gemini", "codex"}] or DEFAULT_PROVIDER_ORDER
+
+
+def _provider_available(provider: str) -> bool:
+    if provider == "claude":
+        return bool(shutil.which(CLAUDE_BIN) or shutil.which("claude"))
+    if provider == "gemini":
+        return bool(shutil.which(GEMINI_BIN) or shutil.which("gemini"))
+    if provider == "codex":
+        return bool(shutil.which(CODEX_BIN) or shutil.which("codex"))
+    return False
+
+
+def _save_provider_state(active: str, reason: str = "", attempts: dict | None = None):
+    try:
+        PROVIDER_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        state = {
+            "timestamp": time.time(),
+            "active_provider": active,
+            "reason": reason,
+            "attempts": attempts or {},
+        }
+        PROVIDER_STATE_FILE.write_text(json.dumps(state, indent=2))
+    except Exception:
+        pass
 
 
 def _is_rate_limit_error(stderr: str, output_lines: list) -> bool:
@@ -71,23 +113,46 @@ def _is_rate_limit_error(stderr: str, output_lines: list) -> bool:
     return any(p in text for p in _RATE_LIMIT_PATTERNS)
 
 
-def _run_once(prompt: str, env: dict, label: str = "") -> tuple[bool, list, list, str, object, str]:
+def _run_once(prompt: str, env: dict, label: str = "", provider: str = "claude") -> tuple[bool, list, list, str, object, str]:
     """Run claude CLI with prompt. Returns (success, output_lines, tool_calls, final_text, proc, stderr).
     Retries up to CLI_RETRY_LIMIT times with CLI_RETRY_DELAY seconds between attempts on subprocess failure."""
-    cmd = [
-        CLAUDE_BIN,
-        "--print",
-        "--dangerously-skip-permissions",
-        "--output-format", "stream-json",
-        "--verbose",
-        "--add-dir", str(SOURCE_DIR),
-    ]
+    if provider == "claude":
+        cmd = [
+            CLAUDE_BIN,
+            "--print",
+            "--dangerously-skip-permissions",
+            "--output-format", "stream-json",
+            "--verbose",
+            "--add-dir", str(SOURCE_DIR),
+        ]
+    elif provider == "gemini":
+        cmd = [
+            GEMINI_BIN,
+            "--yolo",
+            "--output-format",
+            "stream-json",
+            "--prompt",
+            prompt,
+        ]
+    elif provider == "codex":
+        cmd = [
+            CODEX_BIN,
+            "exec",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--skip-git-repo-check",
+            "--cd",
+            str(SOURCE_DIR),
+            "--json",
+            prompt,
+        ]
+    else:
+        return False, [], [], "", None, f"unsupported provider: {provider}"
 
     for cli_attempt in range(1 + CLI_RETRY_LIMIT):
         if label:
-            print(f"[AGENT] Spawning claude CLI {label}...", flush=True)
+            print(f"[AGENT] Spawning {provider} CLI {label}...", flush=True)
         else:
-            print(f"[AGENT] Spawning claude CLI (subscription mode)...", flush=True)
+            print(f"[AGENT] Spawning {provider} CLI...", flush=True)
 
         if cli_attempt > 0:
             print(f"[AGENT] CLI retry {cli_attempt}/{CLI_RETRY_LIMIT} after {CLI_RETRY_DELAY}s delay...", flush=True)
@@ -111,8 +176,9 @@ def _run_once(prompt: str, env: dict, label: str = "") -> tuple[bool, list, list
                 cwd=str(SOURCE_DIR),
             )
 
-            proc.stdin.write(prompt)
-            proc.stdin.close()
+            if provider == "claude":
+                proc.stdin.write(prompt)
+                proc.stdin.close()
 
             for raw_line in proc.stdout:
                 raw_line = raw_line.strip()
@@ -155,12 +221,23 @@ def _run_once(prompt: str, env: dict, label: str = "") -> tuple[bool, list, list
                         success = False
                     else:
                         print(f"[RESULT] {event}")
+                elif provider == "codex":
+                    # codex --json emits many event shapes; extract likely textual payloads.
+                    msg = event.get("message") or event.get("content") or event.get("output")
+                    if isinstance(msg, str) and msg.strip():
+                        final_text = msg.strip()
+                    elif isinstance(msg, list):
+                        for part in msg:
+                            if isinstance(part, dict):
+                                txt = part.get("text", "").strip()
+                                if txt:
+                                    final_text = txt
 
             stderr = proc.stderr.read()
             proc.wait()
 
             if proc.returncode not in (0, None) and not success:
-                print(f"[ERROR] claude exited {proc.returncode}")
+                print(f"[ERROR] {provider} exited {proc.returncode}")
                 if stderr:
                     print(f"  stderr: {stderr[:300]}")
                 subprocess_failed = True
@@ -188,8 +265,9 @@ def _run_once(prompt: str, env: dict, label: str = "") -> tuple[bool, list, list
                         env=env,
                         cwd=str(SOURCE_DIR),
                     )
-                    proc.stdin.write(prompt)
-                    proc.stdin.close()
+                    if provider == "claude":
+                        proc.stdin.write(prompt)
+                        proc.stdin.close()
                     for raw_line in proc.stdout:
                         raw_line = raw_line.strip()
                         if not raw_line:
@@ -226,10 +304,14 @@ def _run_once(prompt: str, env: dict, label: str = "") -> tuple[bool, list, list
                                 print("[WARN] Max turns reached — task incomplete, marking as failure")
                             else:
                                 print(f"[RESULT] {event}")
+                        elif provider == "codex":
+                            msg = event.get("message") or event.get("content") or event.get("output")
+                            if isinstance(msg, str) and msg.strip():
+                                final_text = msg.strip()
                     stderr = proc.stderr.read()
                     proc.wait()
                     if proc.returncode not in (0, None) and not success:
-                        print(f"[ERROR] claude exited {proc.returncode}")
+                        print(f"[ERROR] {provider} exited {proc.returncode}")
                         if stderr:
                             print(f"  stderr: {stderr[:300]}")
                 except Exception as e:
@@ -301,27 +383,56 @@ def run_task(task: str, max_retries: int = TROUBLESHOOTING_RETRY_LIMIT) -> dict:
     prompt_file.parent.mkdir(parents=True, exist_ok=True)
     prompt_file.write_text(prompt)
 
-    success, output_lines, tool_calls, final_text, proc, stderr = _run_once(prompt, env)
+    success = False
+    output_lines = []
+    tool_calls = []
+    final_text = ""
+    proc = None
+    stderr = ""
+    selected_provider = "claude"
+    attempts_by_provider = {}
 
-    # Structured troubleshooting retries on failure
-    for attempt_idx in range(1, max_retries + 1):
-        if success:
-            break
-        rc, failure_signal = _extract_failure_context(final_text, stderr, output_lines, proc)
-        retry_prefix = _build_troubleshooting_prefix(attempt_idx, rc, failure_signal)
-        retry_prompt = _build_prompt(retry_prefix + task)
-        print(f"\n[AGENT] Attempt {attempt_idx} failed - entering troubleshooting pass {attempt_idx}...")
-        success, out2, tc2, ft2, proc2, stderr2 = _run_once(
-            retry_prompt, env, label=f"(troubleshoot-{attempt_idx})"
+    for provider in _provider_order():
+        if not _provider_available(provider):
+            attempts_by_provider[provider] = "unavailable"
+            continue
+
+        selected_provider = provider
+        print(f"[AGENT] Provider attempt: {provider}")
+        success, output_lines, tool_calls, final_text, proc, stderr = _run_once(
+            prompt, env, provider=provider
         )
-        output_lines += out2
-        tool_calls += tc2
-        if ft2:
-            final_text = ft2
-        if proc2 is not None:
-            proc = proc2
-        if stderr2:
-            stderr = stderr2
+
+        # Structured troubleshooting retries on failure, within the same provider.
+        for attempt_idx in range(1, max_retries + 1):
+            if success:
+                break
+            rc, failure_signal = _extract_failure_context(final_text, stderr, output_lines, proc)
+            retry_prefix = _build_troubleshooting_prefix(attempt_idx, rc, failure_signal)
+            retry_prompt = _build_prompt(retry_prefix + task)
+            print(f"\n[AGENT] {provider} attempt {attempt_idx} failed - troubleshooting pass {attempt_idx}...")
+            success, out2, tc2, ft2, proc2, stderr2 = _run_once(
+                retry_prompt, env, label=f"(troubleshoot-{attempt_idx})", provider=provider
+            )
+            output_lines += out2
+            tool_calls += tc2
+            if ft2:
+                final_text = ft2
+            if proc2 is not None:
+                proc = proc2
+            if stderr2:
+                stderr = stderr2
+
+        attempts_by_provider[provider] = "success" if success else "failed"
+        if success:
+            _save_provider_state(provider, "task_succeeded", attempts_by_provider)
+            break
+        if _is_rate_limit_error(stderr, output_lines):
+            _save_provider_state(provider, "rate_limited_failover", attempts_by_provider)
+            continue
+
+    if not success:
+        _save_provider_state(selected_provider, "all_providers_failed", attempts_by_provider)
 
     if success and max_retries > 0:
         mem.append_to_list(
@@ -340,7 +451,7 @@ def run_task(task: str, max_retries: int = TROUBLESHOOTING_RETRY_LIMIT) -> dict:
     mem.record_task(
         task=task[:120],
         success=success,
-        approach=f"claude-cli, {len(tool_calls)} tools: {', '.join(set(tool_calls))[:80]}",
+        approach=f"{selected_provider}-cli, {len(tool_calls)} tools: {', '.join(set(tool_calls))[:80]}",
         interventions=0,
         duration_s=duration,
         notes=failure_notes,
