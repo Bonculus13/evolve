@@ -1,5 +1,4 @@
 [
-  "Create a metrics dashboard endpoint in dashboard.py at /api/metrics that returns JSON with success rate, avg duration, lessons count, and evolution count over time.",
   "Add a 'rollback' tool to tools.py that can restore a .bak file if a recent patch broke something.",
   "Improve the EVOLVE_TASK prompt to include the user's profile summary from profiler.get_profile_summary() so the agent evolves toward Jake's actual usage patterns.",
   "Add a 'search_codebase' tool to tools.py that uses grep/ripgrep to search across all source files for a pattern.",

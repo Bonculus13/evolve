@@ -523,6 +523,70 @@ def health_check():
     })
 
 
+@app.route("/api/metrics")
+def metrics():
+    """Return JSON metrics: success rate, avg duration, lessons count, evolution count over time."""
+    data = mem.get_all()
+    history = data.get("task_history", [])
+
+    total = len(history)
+    successes = sum(1 for t in history if t.get("success"))
+    success_rate = round(successes / total, 4) if total else 0.0
+    avg_duration = round(sum(t.get("duration_s", 0) for t in history) / total, 2) if total else 0.0
+
+    # Lessons count from memory_log.jsonl
+    lessons_file = DATA_DIR / "memory_log.jsonl"
+    lessons_count = 0
+    if lessons_file.exists():
+        lessons_count = sum(1 for line in lessons_file.read_text().strip().splitlines() if line.strip())
+
+    # Evolution log with timestamps for over-time tracking
+    evo_log = []
+    if EVOLUTION_LOG.exists():
+        try:
+            evo_log = json.loads(EVOLUTION_LOG.read_text())
+            if not isinstance(evo_log, list):
+                evo_log = []
+        except Exception:
+            evo_log = []
+
+    evo_total = len(evo_log)
+
+    # Build daily evolution counts for time-series
+    evo_over_time = {}
+    for e in evo_log:
+        ts = e.get("timestamp", 0)
+        day = time.strftime("%Y-%m-%d", time.localtime(ts))
+        evo_over_time[day] = evo_over_time.get(day, 0) + 1
+
+    # Build daily task success rate for time-series
+    tasks_over_time = {}
+    for t in history:
+        ts = t.get("timestamp", 0)
+        day = time.strftime("%Y-%m-%d", time.localtime(ts))
+        if day not in tasks_over_time:
+            tasks_over_time[day] = {"total": 0, "successes": 0}
+        tasks_over_time[day]["total"] += 1
+        if t.get("success"):
+            tasks_over_time[day]["successes"] += 1
+
+    daily_success = {
+        day: round(v["successes"] / v["total"], 4) if v["total"] else 0
+        for day, v in sorted(tasks_over_time.items())
+    }
+
+    return jsonify({
+        "total_tasks": total,
+        "successes": successes,
+        "success_rate": success_rate,
+        "avg_duration_s": avg_duration,
+        "lessons_count": lessons_count,
+        "evolution_count": evo_total,
+        "evolutions_over_time": dict(sorted(evo_over_time.items())),
+        "daily_success_rate": daily_success,
+    })
+
+
 @app.route("/api/clear_log", methods=["POST"])
 def clear_log():
     lf = _state.get("log_file")
