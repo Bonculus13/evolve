@@ -1,25 +1,48 @@
 {
   "created_at": 1772828825.902176,
   "goal_pack": "utility",
-  "cycle_count": 1,
+  "cycle_count": 2,
   "curriculum_stage": "aggressive_autonomy",
   "milestone_level": 0,
   "last_fitness": 0.9325,
   "fitness_history": [
+    0.9325,
     0.9325
   ],
-  "weekly_retrospectives": [],
+  "weekly_retrospectives": [
+    {
+      "week": "2026-W10",
+      "ts": 1772828828.241139,
+      "avg_fitness": 0.9325,
+      "best_fitness": 0.9325,
+      "fitness_gain": 0.0,
+      "next_actions": []
+    }
+  ],
   "planner": {
-    "now": [],
-    "next": [],
-    "later": [],
-    "updated_at": 0
+    "now": [
+      "Improve failure classification and adaptive retries",
+      "Increase benchmark signal quality for fitness"
+    ],
+    "next": [
+      "Expand A/B mutation search space safely",
+      "Refine novelty and utility estimators",
+      "Tune bandit exploration/exploitation balance",
+      "Improve dashboard branch visualization"
+    ],
+    "later": [
+      "Cross-app portfolio transfer automation",
+      "Autonomous milestone-based permission unlocks",
+      "Continuous weekly retrospective auto-actions",
+      "Long-horizon architecture mutation campaigns"
+    ],
+    "updated_at": 1772828828.2407942
   },
   "bandit": {
     "arms": {
       "mutate": {
-        "n": 1,
-        "reward": 0.9325
+        "n": 2,
+        "reward": 1.865
       },
       "assess": {
         "n": 0,
@@ -42,14 +65,22 @@
   "capability_graph": {},
   "tool_policy": {},
   "benchmark": {
-    "latency_ms": [],
-    "success_rate": [],
-    "throughput": [],
-    "prompt_quality": []
+    "latency_ms": [
+      795.6731
+    ],
+    "success_rate": [
+      1.0
+    ],
+    "throughput": [
+      1.0
+    ],
+    "prompt_quality": [
+      0.9595
+    ]
   },
   "failure_classes": {
     "none": 0
   },
   "portfolio_transfers": [],
-  "last_week_key": ""
+  "last_week_key": "2026-W10"
 }
