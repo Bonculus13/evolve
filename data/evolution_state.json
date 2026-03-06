@@ -1,7 +1,7 @@
 {
   "created_at": 1772828825.902176,
   "goal_pack": "utility",
-  "cycle_count": 14,
+  "cycle_count": 15,
   "curriculum_stage": "aggressive_autonomy",
   "milestone_level": 3,
   "last_fitness": 0.4625,
@@ -17,6 +17,7 @@
     0.9325,
     0.9325,
     0.4038,
+    0.4625,
     0.4625,
     0.4625,
     0.4625
@@ -48,7 +49,7 @@
       "Continuous weekly retrospective auto-actions",
       "Long-horizon architecture mutation campaigns"
     ],
-    "updated_at": 1772828936.883463
+    "updated_at": 1772836875.876265
   },
   "bandit": {
     "arms": {
@@ -65,8 +66,8 @@
         "reward": 2.3275
       },
       "challenge": {
-        "n": 5,
-        "reward": 3.6637999999999997
+        "n": 6,
+        "reward": 4.1263
       }
     },
     "epsilon": 0.18
@@ -90,7 +91,8 @@
       766.1631,
       758.497,
       782.9399,
-      42465.1549
+      42465.1549,
+      704.0319
     ],
     "success_rate": [
       1.0,
@@ -102,6 +104,7 @@
       1.0,
       1.0,
       1.0,
+      0.0,
       0.0
     ],
     "throughput": [
@@ -114,7 +117,8 @@
       1.0,
       1.0,
       1.0,
-      0.0235
+      0.0235,
+      1.0
     ],
     "prompt_quality": [
       0.9595,
@@ -126,12 +130,13 @@
       0.9595,
       0.9595,
       0.9595,
-      0.6423
+      0.6423,
+      0.6775
     ]
   },
   "failure_classes": {
     "none": 0,
-    "auth": 4
+    "auth": 5
   },
   "portfolio_transfers": [],
   "last_week_key": "2026-W10"
