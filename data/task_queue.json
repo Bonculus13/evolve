@@ -1,3 +1,1 @@
-[
-  "Create an 'agent_config.json' file that lets the user configure model, max_tokens, pause_between_cycles, and other settings without editing Python code."
-]
+[]
