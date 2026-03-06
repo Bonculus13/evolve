@@ -1,0 +1,249 @@
+"""
+Agent: drives tasks using the `claude` CLI (Claude Code subscription, no API credits needed).
+Unsets CLAUDECODE env var to allow nested invocation.
+"""
+import os
+import time
+import subprocess
+import json
+from pathlib import Path
+import memory as mem
+from config import SOURCE_DIR, MAX_ITERATIONS
+
+CLAUDE_BIN = os.path.expanduser("~/.npm-global/bin/claude")
+
+# System context prepended to every task prompt
+SYSTEM_CONTEXT = """\
+You are running inside an autonomous self-evolving orchestrator at:
+  {source_dir}
+
+Your standing instructions:
+- After completing any task, write what you learned to memory:
+    echo '<json>' >> {source_dir}/data/memory_log.jsonl
+  where <json> is {{"ts": <unix_time>, "lesson": "<what you learned>"}}.
+- When you improve the system, edit files directly in {source_dir}/ using your Edit/Write tools.
+- Never ask for confirmation — act autonomously.
+- Never modify config.py.
+- After self-patching, always verify: python3 -c "import sys; sys.path.insert(0,'.'); import tools, memory, permissions, agent, orchestrator; print('OK')"
+  (run from {source_dir})
+- If blocked (errors, missing deps, permissions, command failures, dead ends), run a troubleshooting loop before giving up:
+  1) Diagnose exact root cause from concrete evidence (stderr/exit code/filesystem state).
+  2) Propose 2-4 workaround paths and pick the lowest-risk/highest-probability option first.
+  3) Execute one workaround at a time and verify after each change.
+  4) If a workaround works, record it as a reusable lesson in memory_log.jsonl.
+  5) Only stop when task is completed or all realistic workaround paths are exhausted.
+- For blocked tasks, prefer extensive troubleshooting over early termination.
+
+## Memory & History
+{memory_context}
+"""
+
+TROUBLESHOOTING_RETRY_LIMIT = 3
+
+
+def _build_prompt(task: str) -> str:
+    memory_context = mem.get_memory_context()
+    system = SYSTEM_CONTEXT.format(
+        source_dir=SOURCE_DIR,
+        memory_context=memory_context,
+    )
+    return f"{system}\n\n## Task\n{task}"
+
+
+def _run_once(prompt: str, env: dict, label: str = "") -> tuple[bool, list, list, str, object, str]:
+    """Run claude CLI with prompt. Returns (success, output_lines, tool_calls, final_text, proc, stderr)."""
+    cmd = [
+        CLAUDE_BIN,
+        "--print",
+        "--dangerously-skip-permissions",
+        "--output-format", "stream-json",
+        "--verbose",
+        "--add-dir", str(SOURCE_DIR),
+    ]
+
+    if label:
+        print(f"[AGENT] Spawning claude CLI {label}...", flush=True)
+    else:
+        print(f"[AGENT] Spawning claude CLI (subscription mode)...", flush=True)
+
+    success = False
+    output_lines = []
+    tool_calls = []
+    final_text = ""
+    stderr = ""
+    proc = None
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            cwd=str(SOURCE_DIR),
+        )
+
+        proc.stdin.write(prompt)
+        proc.stdin.close()
+
+        for raw_line in proc.stdout:
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+            output_lines.append(raw_line)
+
+            try:
+                event = json.loads(raw_line)
+            except json.JSONDecodeError:
+                print(f"  {raw_line}")
+                continue
+
+            etype = event.get("type", "")
+
+            if etype == "assistant":
+                content = event.get("message", {}).get("content", [])
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "text":
+                            txt = block.get("text", "").strip()
+                            if txt:
+                                print(f"\n[Claude] {txt[:500]}", flush=True)
+                                final_text = txt
+                        elif block.get("type") == "tool_use":
+                            name = block.get("name", "")
+                            inp = block.get("input", {})
+                            summary = str(inp)[:120]
+                            print(f"[TOOL] {name}({summary})", flush=True)
+                            tool_calls.append(name)
+
+            elif etype == "result":
+                result_type = event.get("subtype", "")
+                if result_type == "success":
+                    final_text = event.get("result", "")
+                    print(f"\n[RESULT] {final_text[:300]}", flush=True)
+                    success = True
+                elif result_type == "error_max_turns":
+                    print("[WARN] Max turns reached — task incomplete, marking as failure")
+                    success = False
+                else:
+                    print(f"[RESULT] {event}")
+
+        stderr = proc.stderr.read()
+        proc.wait()
+
+        if proc.returncode not in (0, None) and not success:
+            print(f"[ERROR] claude exited {proc.returncode}")
+            if stderr:
+                print(f"  stderr: {stderr[:300]}")
+
+    except Exception as e:
+        print(f"[ERROR] {e}")
+
+    return success, output_lines, tool_calls, final_text, proc, stderr
+
+
+def _extract_failure_context(final_text: str, stderr: str, output_lines: list, proc) -> tuple[str, str]:
+    rc = proc.returncode if proc is not None else "N/A"
+    signal = (final_text or stderr or "")
+    if not signal and output_lines:
+        signal = output_lines[-1]
+    signal = signal[-800:].strip() if signal else "no output captured"
+    return str(rc), signal
+
+
+def _build_troubleshooting_prefix(attempt_idx: int, rc: str, signal: str) -> str:
+    common = (
+        f"[RETRY CONTEXT] Previous attempt failed (exit_code={rc}).\n"
+        f"Last failure signal:\n{signal[:500]}\n\n"
+    )
+    if attempt_idx == 1:
+        return common + (
+            "Troubleshooting pass 1:\n"
+            "- Identify exact root cause from evidence.\n"
+            "- Run focused diagnostics.\n"
+            "- Try the most likely workaround.\n\n"
+        )
+    if attempt_idx == 2:
+        return common + (
+            "Troubleshooting pass 2:\n"
+            "- Assume previous workaround was insufficient.\n"
+            "- Try a materially different workaround strategy.\n"
+            "- Verify result with explicit checks.\n\n"
+        )
+    return common + (
+        "Troubleshooting pass 3:\n"
+        "- Use conservative fallback path to complete task.\n"
+        "- If full success is impossible, still deliver maximum partial completion with evidence.\n\n"
+    )
+
+
+def run_task(task: str, max_retries: int = TROUBLESHOOTING_RETRY_LIMIT) -> dict:
+    start = time.time()
+    print(f"\n[AGENT] Starting task")
+    print("─" * 60)
+
+    # Strip vars that prevent nested Claude Code or force API-key billing
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "ANTHROPIC_API_KEY")}
+
+    prompt = _build_prompt(task)
+    # Write prompt to temp file for debugging
+    prompt_file = SOURCE_DIR / "data" / ".current_prompt.txt"
+    prompt_file.parent.mkdir(parents=True, exist_ok=True)
+    prompt_file.write_text(prompt)
+
+    success, output_lines, tool_calls, final_text, proc, stderr = _run_once(prompt, env)
+
+    # Structured troubleshooting retries on failure
+    for attempt_idx in range(1, max_retries + 1):
+        if success:
+            break
+        rc, failure_signal = _extract_failure_context(final_text, stderr, output_lines, proc)
+        retry_prefix = _build_troubleshooting_prefix(attempt_idx, rc, failure_signal)
+        retry_prompt = _build_prompt(retry_prefix + task)
+        print(f"\n[AGENT] Attempt {attempt_idx} failed - entering troubleshooting pass {attempt_idx}...")
+        success, out2, tc2, ft2, proc2, stderr2 = _run_once(
+            retry_prompt, env, label=f"(troubleshoot-{attempt_idx})"
+        )
+        output_lines += out2
+        tool_calls += tc2
+        if ft2:
+            final_text = ft2
+        if proc2 is not None:
+            proc = proc2
+        if stderr2:
+            stderr = stderr2
+
+    if success and max_retries > 0:
+        mem.append_to_list(
+            "learned_patterns",
+            "When blocked, run staged troubleshooting: diagnose root cause, try distinct workaround paths, and verify each step.",
+        )
+
+    duration = time.time() - start
+
+    failure_notes = ""
+    if not success:
+        rc = proc.returncode if proc is not None else "N/A"
+        prefix = f"rc={rc} out_lines={len(output_lines)} tools={len(tool_calls)}: "
+        failure_notes = prefix + (final_text or stderr or "no output captured")[-200:].strip()
+
+    mem.record_task(
+        task=task[:120],
+        success=success,
+        approach=f"claude-cli, {len(tool_calls)} tools: {', '.join(set(tool_calls))[:80]}",
+        interventions=0,
+        duration_s=duration,
+        notes=failure_notes,
+    )
+
+    print("\n" + "─" * 60)
+    print(f"[AGENT] Done. success={success}, tools_used={len(tool_calls)}, time={duration:.1f}s")
+
+    return {
+        "success": success,
+        "interventions": 0,
+        "duration_s": duration,
+        "final_response": final_text,
+    }
