@@ -1,5 +1,4 @@
 [
-  "Add a 'search_codebase' tool to tools.py that uses grep/ripgrep to search across all source files for a pattern.",
   "Create a notification system: after each evolution cycle, append a summary to data/notifications.jsonl that the dashboard can display as a feed.",
   "Add session persistence to agent.py: save the claude session ID so tasks can be resumed if interrupted.",
   "Improve git_release.py: auto-generate release notes by diffing the current HEAD against the last tag and summarizing changes.",
