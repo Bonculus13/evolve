@@ -1,4 +1,3 @@
 [
-  "Add a 'benchmark' mode that runs a set of known tasks and measures success rate, duration, and token usage to track performance over time.",
   "Create an 'agent_config.json' file that lets the user configure model, max_tokens, pause_between_cycles, and other settings without editing Python code."
 ]
