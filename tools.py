@@ -128,6 +128,21 @@ TOOL_DEFS = [
             "properties": {},
         },
     },
+    {
+        "name": "git_auto_commit",
+        "description": (
+            "Stage all changes in the evolve/ directory, commit with a descriptive message, "
+            "and push to the remote. Use after making improvements or fixes to persist them. "
+            "The commit message should summarize what changed and why."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "Descriptive commit message summarizing the changes"},
+            },
+            "required": ["message"],
+        },
+    },
 ]
 
 
@@ -168,6 +183,8 @@ def execute(tool_name: str, tool_input: dict, tool_use_id: str,
             return ToolResult(tool_use_id, mem.get_memory_context())
         elif tool_name == "list_self":
             return _list_self(tool_use_id)
+        elif tool_name == "git_auto_commit":
+            return _git_auto_commit(tool_input, tool_use_id, intervention_counter)
         else:
             return ToolResult(tool_use_id, f"Unknown tool: {tool_name}", is_error=True)
     except Exception as e:
@@ -332,6 +349,53 @@ def _list_self(tid: str) -> ToolResult:
     files = sorted(SOURCE_DIR.glob("*.py"))
     lines = [f"{f.name} ({f.stat().st_size} bytes)" for f in files]
     return ToolResult(tid, "\n".join(lines))
+
+
+def _git_auto_commit(inp: dict, tid: str, counter: list) -> ToolResult:
+    message = inp["message"]
+
+    allowed = permissions.request("bash", "git commit & push")
+    if not allowed:
+        counter.append(1)
+        return ToolResult(tid, "[DENIED] git_auto_commit not allowed", is_error=True)
+
+    try:
+        # Stage all changes in the evolve/ directory
+        add = subprocess.run(
+            ["git", "add", "-A", "."],
+            capture_output=True, text=True, timeout=15, cwd=str(SOURCE_DIR)
+        )
+        if add.returncode != 0:
+            return ToolResult(tid, f"[ERROR] git add failed: {add.stderr}", is_error=True)
+
+        # Check if there's anything to commit
+        status = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            capture_output=True, text=True, timeout=10, cwd=str(SOURCE_DIR)
+        )
+        if status.returncode == 0:
+            return ToolResult(tid, "Nothing to commit — working tree clean.")
+
+        # Commit
+        commit = subprocess.run(
+            ["git", "commit", "-m", message],
+            capture_output=True, text=True, timeout=30, cwd=str(SOURCE_DIR)
+        )
+        if commit.returncode != 0:
+            return ToolResult(tid, f"[ERROR] git commit failed: {commit.stderr}", is_error=True)
+
+        # Push
+        push = subprocess.run(
+            ["git", "push"],
+            capture_output=True, text=True, timeout=60, cwd=str(SOURCE_DIR)
+        )
+        if push.returncode != 0:
+            return ToolResult(tid, f"Committed but push failed: {push.stderr}", is_error=True)
+
+        _log_action("git_auto_commit", message)
+        return ToolResult(tid, f"Committed and pushed: {message}\n{commit.stdout.strip()}")
+    except subprocess.TimeoutExpired:
+        return ToolResult(tid, "[ERROR] git operation timed out", is_error=True)
 
 
 def _log_action(action: str, detail: str):

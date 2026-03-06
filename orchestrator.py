@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import agent
 import memory as mem
 import portfolio
-from config import PERMISSIONS_FILE, EVOLUTION_LOG
+from config import PERMISSIONS_FILE, EVOLUTION_LOG, DATA_DIR
 
 
 EVOLVE_TASK = """\
@@ -116,6 +116,39 @@ ORCHESTRATOR_CAPABILITY_TAGS = [
 ]
 
 
+TASK_QUEUE_FILE = DATA_DIR / "task_queue.json"
+
+
+def _pop_task() -> str | None:
+    """Pop the next task from the queue file, if any."""
+    if not TASK_QUEUE_FILE.exists():
+        return None
+    try:
+        tasks = json.loads(TASK_QUEUE_FILE.read_text())
+        if not tasks:
+            return None
+        task = tasks.pop(0)
+        TASK_QUEUE_FILE.write_text(json.dumps(tasks, indent=2))
+        return task
+    except Exception:
+        return None
+
+
+def _auto_push(cycle: int):
+    """Commit and push any changes after each cycle."""
+    try:
+        import subprocess
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, cwd=str(Path(__file__).parent)).stdout.strip()
+        if not status:
+            return
+        subprocess.run(["git", "add", "-A", "--", ":!.env", ":!data/memory.json", ":!data/permissions.json", ":!data/user_profile.json", ":!data/.current_prompt.txt", ":!*.bak"], cwd=str(Path(__file__).parent))
+        subprocess.run(["git", "commit", "-m", f"auto-evolve cycle {cycle}\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"], capture_output=True, cwd=str(Path(__file__).parent))
+        subprocess.run(["git", "push"], capture_output=True, cwd=str(Path(__file__).parent))
+        print(f"[GIT] Pushed changes from cycle {cycle}", flush=True)
+    except Exception as e:
+        print(f"[GIT] Push failed: {e}", flush=True)
+
+
 def _handle_sigint(sig, frame):
     global _running
     print("\n\n[Stopping after current cycle — Ctrl+C again to force quit]")
@@ -167,12 +200,20 @@ def auto_evolve_loop(max_cycles: int | None = None, pause_s: int = 5):
         print(f"[CYCLE {cycle}] {time.strftime('%H:%M:%S')}")
         print(f"{'─'*60}")
 
-        if cycle % 4 == 0:
+        # Check task queue first
+        queued = _pop_task()
+        if queued:
+            print(f"[CYCLE TYPE] Queued task: {queued[:60]}")
+            agent.run_task(queued)
+        elif cycle % 4 == 0:
             print("[CYCLE TYPE] Assessment")
             agent.run_task(ASSESS_TASK)
         else:
             print("[CYCLE TYPE] Self-improvement")
             agent.run_task(EVOLVE_TASK)
+
+        # Auto-commit and push after each successful cycle
+        _auto_push(cycle)
 
         if not _running:
             break

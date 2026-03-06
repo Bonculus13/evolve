@@ -1,0 +1,21 @@
+[
+  "Add an 'http_get' tool to tools.py that fetches a URL and returns the content. Useful for researching AI news or fetching documentation.",
+  "Create a README.md for the GitHub repo that explains what this project is, how to install/run it, and its self-evolving architecture.",
+  "Add error retry logic to agent.py: if the claude CLI subprocess fails, retry up to 2 times with a 5s delay before giving up.",
+  "Add a 'summarize_changes' tool that reads git log and git diff and returns a human-readable summary of recent changes.",
+  "Improve dashboard.py: add a 'Files' tab that shows all source files with their sizes and last-modified timestamps.",
+  "Add rate limiting awareness to agent.py: if claude CLI returns a rate limit error, exponentially back off (5s, 15s, 45s) before retrying.",
+  "Create a 'health_check' endpoint in dashboard.py at /api/health that returns system info: Python version, disk usage, memory stats, and process uptime.",
+  "Add Google Drive sync to the auto-evolve loop: after every 5 cycles, automatically sync the project to Google Drive using profiler.sync_to_gdrive().",
+  "Improve profiler.py: add a function that detects available GPUs (Metal, CUDA) and reports hardware capabilities useful for ML workloads.",
+  "Add a 'schedule' mode to orchestrator.py that runs evolve cycles on a cron-like schedule (e.g., every hour) using time-based checks.",
+  "Create a metrics dashboard endpoint in dashboard.py at /api/metrics that returns JSON with success rate, avg duration, lessons count, and evolution count over time.",
+  "Add a 'rollback' tool to tools.py that can restore a .bak file if a recent patch broke something.",
+  "Improve the EVOLVE_TASK prompt to include the user's profile summary from profiler.get_profile_summary() so the agent evolves toward Jake's actual usage patterns.",
+  "Add a 'search_codebase' tool to tools.py that uses grep/ripgrep to search across all source files for a pattern.",
+  "Create a notification system: after each evolution cycle, append a summary to data/notifications.jsonl that the dashboard can display as a feed.",
+  "Add session persistence to agent.py: save the claude session ID so tasks can be resumed if interrupted.",
+  "Improve git_release.py: auto-generate release notes by diffing the current HEAD against the last tag and summarizing changes.",
+  "Add a 'benchmark' mode that runs a set of known tasks and measures success rate, duration, and token usage to track performance over time.",
+  "Create an 'agent_config.json' file that lets the user configure model, max_tokens, pause_between_cycles, and other settings without editing Python code."
+]
