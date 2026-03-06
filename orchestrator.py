@@ -134,6 +134,19 @@ def _auto_push(cycle: int) -> bool:
         ).stdout.strip()
         if not status:
             return False
+        material_lines = []
+        for line in status.splitlines():
+            path = line[3:].strip()
+            if not path:
+                continue
+            if path.startswith("data/logs/"):
+                continue
+            if path in {"data/memory.json", "data/evolution_state.json", "data/provider_status.json", "data/benchmarks.json"}:
+                continue
+            material_lines.append(path)
+        if not material_lines:
+            print(f"[GIT] Skipping push for cycle {cycle} (no material code changes).", flush=True)
+            return False
 
         subprocess.run(
             [
@@ -514,7 +527,11 @@ def _run_single_cycle(cycle_number: int) -> dict:
 
     _portfolio_transfer_hook()
 
-    pushed = _auto_push(cycle_number)
+    pushed = False
+    if success:
+        pushed = _auto_push(cycle_number)
+    else:
+        print("[GIT] Skipping push: cycle failed.")
     if pushed:
         _safe_rollback_if_needed(cycle_number)
 

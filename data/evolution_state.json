@@ -4,7 +4,7 @@
   "cycle_count": 16,
   "curriculum_stage": "architecture",
   "milestone_level": 3,
-  "last_fitness": 0.4568,
+  "last_fitness": 0.3252,
   "fitness_history": [
     0.9325,
     0.9325,
@@ -21,7 +21,7 @@
     0.4625,
     0.4625,
     0.4625,
-    0.4568
+    0.3252
   ],
   "weekly_retrospectives": [
     {
@@ -56,7 +56,7 @@
     "arms": {
       "mutate": {
         "n": 4,
-        "reward": 3.2542999999999997
+        "reward": 3.1227
       },
       "assess": {
         "n": 3,
@@ -77,7 +77,8 @@
     "3f522ffb507de42a9c",
     "8a799d8c520f371573",
     "35e0ed47166f987735",
-    "0010b2248c5e5f46f1"
+    "0010b2248c5e5f46f1",
+    "0e44afb3ef1a7f12d0"
   ],
   "capability_graph": {},
   "tool_policy": {},
@@ -137,8 +138,7 @@
   },
   "failure_classes": {
     "none": 0,
-    "auth": 5,
-    "unknown": 1
+    "auth": 6
   },
   "portfolio_transfers": [],
   "last_week_key": "2026-W10"
