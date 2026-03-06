@@ -18,6 +18,8 @@ import sys
 import json
 import time
 import signal
+import os
+import subprocess
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -76,7 +78,7 @@ build_profile()
 print(get_profile_summary())
 "
    Also run: system_profiler SPHardwareDataType 2>/dev/null | grep -E "Model|Processor|Memory|GPU"
-   And: ioreg -l | grep -i "gpu\|metal\|neural" 2>/dev/null | head -10
+   And: ioreg -l | grep -Ei "gpu|metal|neural" 2>/dev/null | head -10
 
 3. Research latest AI developments to inform evolution direction:
    Search for: "latest AI agent frameworks 2025 autonomous"
@@ -140,16 +142,32 @@ def _pop_task() -> str | None:
 def _auto_push(cycle: int):
     """Commit and push any changes after each cycle."""
     try:
-        import subprocess
         status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, cwd=str(Path(__file__).parent)).stdout.strip()
         if not status:
             return
-        subprocess.run(["git", "add", "-A", "--", ":!.env", ":!data/memory.json", ":!data/permissions.json", ":!data/user_profile.json", ":!data/.current_prompt.txt", ":!*.bak"], cwd=str(Path(__file__).parent))
+        subprocess.run(
+            ["git", "-c", "advice.addIgnoredFile=false", "add", "-A", "--", ":!.env", ":!data/memory.json", ":!data/permissions.json", ":!data/user_profile.json", ":!data/.current_prompt.txt", ":!*.bak"],
+            cwd=str(Path(__file__).parent),
+        )
         subprocess.run(["git", "commit", "-m", f"auto-evolve cycle {cycle}\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"], capture_output=True, cwd=str(Path(__file__).parent))
         subprocess.run(["git", "push"], capture_output=True, cwd=str(Path(__file__).parent))
         print(f"[GIT] Pushed changes from cycle {cycle}", flush=True)
     except Exception as e:
         print(f"[GIT] Push failed: {e}", flush=True)
+
+
+def _repo_dirty() -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            cwd=str(Path(__file__).parent),
+            timeout=5,
+        )
+        return bool(result.stdout.strip())
+    except Exception:
+        return False
 
 
 def _handle_sigint(sig, frame):
@@ -193,6 +211,7 @@ def auto_evolve_loop(max_cycles: int | None = None, pause_s: int = 5):
     print(f"{'='*60}")
 
     cycle = 0
+    sync_every = int(os.environ.get("EVOLVE_GDRIVE_SYNC_EVERY", "50"))
     while _running:
         if max_cycles and cycle >= max_cycles:
             print(f"\n[Done] Completed {cycle} cycles.")
@@ -219,10 +238,13 @@ def auto_evolve_loop(max_cycles: int | None = None, pause_s: int = 5):
         _auto_push(cycle)
 
         # Sync to Google Drive every 5 cycles
-        if cycle % 5 == 0:
-            print(f"[GDRIVE] Syncing to Google Drive...")
-            result = profiler.sync_to_gdrive()
-            print(f"[GDRIVE] {result}")
+        if sync_every > 0 and cycle % sync_every == 0:
+            if _repo_dirty():
+                print("[GDRIVE] Syncing to Google Drive...")
+                result = profiler.sync_to_gdrive()
+                print(f"[GDRIVE] {result}")
+            else:
+                print("[GDRIVE] No changes - skipping sync")
 
         if not _running:
             break
@@ -264,6 +286,7 @@ def schedule_loop(interval_s: int, max_cycles: int | None = None):
     print(f"{'='*60}")
 
     cycle = 0
+    sync_every = int(os.environ.get("EVOLVE_GDRIVE_SYNC_EVERY", "50"))
     while _running:
         if max_cycles and cycle >= max_cycles:
             print(f"\n[Done] Completed {cycle} scheduled cycles.")
@@ -289,10 +312,13 @@ def schedule_loop(interval_s: int, max_cycles: int | None = None):
 
         _auto_push(cycle)
 
-        if cycle % 5 == 0:
-            print("[GDRIVE] Syncing to Google Drive...")
-            result = profiler.sync_to_gdrive()
-            print(f"[GDRIVE] {result}")
+        if sync_every > 0 and cycle % sync_every == 0:
+            if _repo_dirty():
+                print("[GDRIVE] Syncing to Google Drive...")
+                result = profiler.sync_to_gdrive()
+                print(f"[GDRIVE] {result}")
+            else:
+                print("[GDRIVE] No changes - skipping sync")
 
         if not _running:
             break

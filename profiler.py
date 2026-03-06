@@ -345,11 +345,16 @@ def sync_to_gdrive():
     try:
         dst.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
-            ["rsync", "-av", "--exclude=__pycache__", "--exclude=*.bak",
+            ["rsync", "-az", "--delete", "--info=stats1", "--exclude=__pycache__", "--exclude=*.bak",
              "--exclude=.env", f"{src}/", f"{dst}/"],
             capture_output=True, text=True, timeout=60
         )
-        return f"Synced to GDrive: {dst}\n{result.stdout[-300:]}"
+        if result.returncode != 0:
+            tail = (result.stderr or result.stdout)[-300:]
+            return f"GDrive sync failed (rc={result.returncode}): {tail}"
+        stats_lines = [ln.strip() for ln in result.stdout.splitlines() if "Number of files" in ln or "Total file size" in ln or "Total transferred file size" in ln]
+        stats = " | ".join(stats_lines) if stats_lines else "ok"
+        return f"Synced to GDrive: {dst} ({stats})"
     except Exception as e:
         return f"GDrive sync failed: {e}"
 
