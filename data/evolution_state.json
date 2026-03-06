@@ -1,11 +1,12 @@
 {
   "created_at": 1772828825.902176,
   "goal_pack": "utility",
-  "cycle_count": 6,
+  "cycle_count": 7,
   "curriculum_stage": "aggressive_autonomy",
   "milestone_level": 0,
   "last_fitness": 0.9325,
   "fitness_history": [
+    0.9325,
     0.9325,
     0.9325,
     0.9325,
@@ -40,7 +41,7 @@
       "Continuous weekly retrospective auto-actions",
       "Long-horizon architecture mutation campaigns"
     ],
-    "updated_at": 1772828839.0137432
+    "updated_at": 1772828840.9463491
   },
   "bandit": {
     "arms": {
@@ -53,8 +54,8 @@
         "reward": 1.865
       },
       "stabilize": {
-        "n": 1,
-        "reward": 0.9325
+        "n": 2,
+        "reward": 1.865
       },
       "challenge": {
         "n": 0,
@@ -76,9 +77,11 @@
       770.4809,
       758.7702,
       709.8281,
-      743.675
+      743.675,
+      754.4029
     ],
     "success_rate": [
+      1.0,
       1.0,
       1.0,
       1.0,
@@ -90,9 +93,11 @@
       1.0,
       1.0,
       1.0,
+      1.0,
       1.0
     ],
     "prompt_quality": [
+      0.9595,
       0.9595,
       0.9595,
       0.9595,
