@@ -1,5 +1,4 @@
 [
-  "Improve profiler.py: add a function that detects available GPUs (Metal, CUDA) and reports hardware capabilities useful for ML workloads.",
   "Add a 'schedule' mode to orchestrator.py that runs evolve cycles on a cron-like schedule (e.g., every hour) using time-based checks.",
   "Create a metrics dashboard endpoint in dashboard.py at /api/metrics that returns JSON with success rate, avg duration, lessons count, and evolution count over time.",
   "Add a 'rollback' tool to tools.py that can restore a .bak file if a recent patch broke something.",

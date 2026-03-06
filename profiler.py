@@ -186,6 +186,156 @@ def get_profile_summary() -> str:
     return "\n".join(lines)
 
 
+def detect_gpu_capabilities() -> dict:
+    """Detect available GPUs (Metal, CUDA) and report hardware capabilities for ML."""
+    caps = {"gpus": [], "metal": False, "cuda": False, "cpu": {}, "memory_gb": 0.0}
+
+    # --- CPU info ---
+    try:
+        brand = subprocess.run(
+            ["sysctl", "-n", "machdep.cpu.brand_string"],
+            capture_output=True, text=True, timeout=5
+        )
+        if brand.returncode == 0 and brand.stdout.strip():
+            caps["cpu"]["brand"] = brand.stdout.strip()
+        cores_phys = subprocess.run(
+            ["sysctl", "-n", "hw.physicalcpu"],
+            capture_output=True, text=True, timeout=5
+        )
+        cores_log = subprocess.run(
+            ["sysctl", "-n", "hw.logicalcpu"],
+            capture_output=True, text=True, timeout=5
+        )
+        if cores_phys.returncode == 0:
+            caps["cpu"]["physical_cores"] = int(cores_phys.stdout.strip())
+        if cores_log.returncode == 0:
+            caps["cpu"]["logical_cores"] = int(cores_log.stdout.strip())
+    except Exception:
+        pass
+
+    # Fallback CPU detection for Linux
+    if not caps["cpu"]:
+        try:
+            with open("/proc/cpuinfo") as f:
+                cpuinfo = f.read()
+            models = re.findall(r"model name\s*:\s*(.+)", cpuinfo)
+            if models:
+                caps["cpu"]["brand"] = models[0].strip()
+                caps["cpu"]["logical_cores"] = len(models)
+        except Exception:
+            pass
+
+    # --- Total system memory ---
+    try:
+        mem = subprocess.run(
+            ["sysctl", "-n", "hw.memsize"],
+            capture_output=True, text=True, timeout=5
+        )
+        if mem.returncode == 0:
+            caps["memory_gb"] = round(int(mem.stdout.strip()) / (1024 ** 3), 1)
+    except Exception:
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemTotal"):
+                        kb = int(re.search(r"\d+", line).group())
+                        caps["memory_gb"] = round(kb / (1024 ** 2), 1)
+                        break
+        except Exception:
+            pass
+
+    # --- Apple Metal GPU detection (macOS) ---
+    try:
+        sp = subprocess.run(
+            ["system_profiler", "SPDisplaysDataType", "-json"],
+            capture_output=True, text=True, timeout=10
+        )
+        if sp.returncode == 0:
+            data = json.loads(sp.stdout)
+            displays = data.get("SPDisplaysDataType", [])
+            for gpu in displays:
+                name = gpu.get("sppci_model", gpu.get("_name", "Unknown GPU"))
+                vram = gpu.get("spdisplays_vram", gpu.get("sppci_vram", "unknown"))
+                metal_support = gpu.get("spdisplays_mtlgpufamilysupport",
+                                       gpu.get("spdisplays_metal", gpu.get("sppci_metal", "")))
+                gpu_cores = gpu.get("sppci_cores", "")
+                gpu_info = {
+                    "name": name,
+                    "vram": vram,
+                    "metal": "metal" in str(metal_support).lower(),
+                    "metal_family": str(metal_support) if metal_support else None,
+                    "vendor": gpu.get("spdisplays_vendor", gpu.get("sppci_vendor", "")),
+                    "gpu_cores": int(gpu_cores) if gpu_cores.isdigit() else None,
+                    "type": "integrated" if "apple" in name.lower() else "discrete",
+                }
+                # Unified memory on Apple Silicon
+                if "apple" in name.lower():
+                    gpu_info["unified_memory_gb"] = caps["memory_gb"]
+                    gpu_info["type"] = "apple_silicon"
+                caps["gpus"].append(gpu_info)
+                if gpu_info["metal"]:
+                    caps["metal"] = True
+    except Exception:
+        pass
+
+    # --- NVIDIA / CUDA detection ---
+    try:
+        nv = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total,driver_version,compute_cap",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10
+        )
+        if nv.returncode == 0:
+            for line in nv.stdout.strip().splitlines():
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 4:
+                    caps["gpus"].append({
+                        "name": parts[0],
+                        "vram_mb": int(parts[1]),
+                        "driver_version": parts[2],
+                        "compute_capability": parts[3],
+                        "type": "discrete",
+                        "cuda": True,
+                    })
+                    caps["cuda"] = True
+    except FileNotFoundError:
+        pass  # nvidia-smi not installed
+    except Exception:
+        pass
+
+    # --- ML framework availability ---
+    ml_frameworks = {}
+    for pkg, import_name in [("torch", "torch"), ("tensorflow", "tensorflow"),
+                              ("jax", "jax"), ("mlx", "mlx")]:
+        try:
+            result = subprocess.run(
+                ["python3", "-c", f"import {import_name}; print({import_name}.__version__)"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                ml_frameworks[pkg] = result.stdout.strip()
+        except Exception:
+            pass
+    if ml_frameworks:
+        caps["ml_frameworks"] = ml_frameworks
+
+    # --- ML readiness summary ---
+    summary_parts = []
+    if caps["metal"]:
+        summary_parts.append("Metal GPU available")
+    if caps["cuda"]:
+        summary_parts.append("CUDA GPU available")
+    if caps.get("ml_frameworks"):
+        summary_parts.append(f"Frameworks: {', '.join(caps['ml_frameworks'].keys())}")
+    if caps["memory_gb"] >= 16:
+        summary_parts.append(f"{caps['memory_gb']}GB RAM (sufficient for local ML)")
+    elif caps["memory_gb"] > 0:
+        summary_parts.append(f"{caps['memory_gb']}GB RAM (limited for large models)")
+    caps["ml_readiness"] = "; ".join(summary_parts) if summary_parts else "No ML acceleration detected"
+
+    return caps
+
+
 def sync_to_gdrive():
     """Sync the evolve project to Jake's Google Drive."""
     src = Path(__file__).parent
