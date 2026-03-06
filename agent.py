@@ -7,6 +7,8 @@ import time
 import subprocess
 import json
 import shutil
+import re
+from datetime import datetime, timedelta
 from pathlib import Path
 import memory as mem
 from config import SOURCE_DIR, MAX_ITERATIONS
@@ -111,6 +113,27 @@ def _is_rate_limit_error(stderr: str, output_lines: list) -> bool:
     """Check if the error is a rate limit / overload error."""
     text = (stderr + " " + " ".join(output_lines[-5:])).lower()
     return any(p in text for p in _RATE_LIMIT_PATTERNS)
+
+
+def _extract_reset_cooldown_seconds(text: str) -> int | None:
+    """Parse reset time text like 'resets 12pm' and return cooldown seconds."""
+    if not text:
+        return None
+    m = re.search(r"resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)", text.lower())
+    if not m:
+        return None
+    hour = int(m.group(1))
+    minute = int(m.group(2) or "0")
+    meridiem = m.group(3)
+    if meridiem == "pm" and hour != 12:
+        hour += 12
+    if meridiem == "am" and hour == 12:
+        hour = 0
+    now = datetime.now()
+    reset = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if reset <= now:
+        reset += timedelta(days=1)
+    return int((reset - now).total_seconds())
 
 
 def _run_once(prompt: str, env: dict, label: str = "", provider: str = "claude") -> tuple[bool, list, list, str, object, str]:
@@ -236,7 +259,7 @@ def _run_once(prompt: str, env: dict, label: str = "", provider: str = "claude")
             stderr = proc.stderr.read()
             proc.wait()
 
-            if not success and proc.returncode == 0 and output_lines:
+            if not success and proc.returncode == 0 and output_lines and not _is_rate_limit_error(stderr, output_lines):
                 # Some CLIs return successful plain/JSON lines without a "result.success" event.
                 if not final_text:
                     final_text = output_lines[-1][:1000]
@@ -397,6 +420,8 @@ def run_task(task: str, max_retries: int = TROUBLESHOOTING_RETRY_LIMIT) -> dict:
     stderr = ""
     selected_provider = "claude"
     attempts_by_provider = {}
+    any_rate_limited = False
+    rate_limit_text = ""
 
     for provider in _provider_order():
         if not _provider_available(provider):
@@ -434,6 +459,8 @@ def run_task(task: str, max_retries: int = TROUBLESHOOTING_RETRY_LIMIT) -> dict:
             _save_provider_state(provider, "task_succeeded", attempts_by_provider)
             break
         if _is_rate_limit_error(stderr, output_lines):
+            any_rate_limited = True
+            rate_limit_text = ((final_text or "") + "\n" + (stderr or "") + "\n" + "\n".join(output_lines[-8:])).strip()
             _save_provider_state(provider, "rate_limited_failover", attempts_by_provider)
             continue
 
@@ -453,6 +480,8 @@ def run_task(task: str, max_retries: int = TROUBLESHOOTING_RETRY_LIMIT) -> dict:
         rc = proc.returncode if proc is not None else "N/A"
         prefix = f"rc={rc} out_lines={len(output_lines)} tools={len(tool_calls)}: "
         failure_notes = prefix + (final_text or stderr or "no output captured")[-200:].strip()
+        if any_rate_limited:
+            failure_notes = "rate_limited=true " + failure_notes
 
     mem.record_task(
         task=task[:120],
@@ -461,7 +490,13 @@ def run_task(task: str, max_retries: int = TROUBLESHOOTING_RETRY_LIMIT) -> dict:
         interventions=0,
         duration_s=duration,
         notes=failure_notes,
+        rate_limited=any_rate_limited,
     )
+
+    if not success and any_rate_limited:
+        cooldown_s = _extract_reset_cooldown_seconds(rate_limit_text) or 3600
+        print(f"[AGENT] Rate limit cooldown engaged for {cooldown_s}s", flush=True)
+        time.sleep(cooldown_s)
 
     print("\n" + "─" * 60)
     print(f"[AGENT] Done. success={success}, tools_used={len(tool_calls)}, time={duration:.1f}s")
@@ -471,4 +506,5 @@ def run_task(task: str, max_retries: int = TROUBLESHOOTING_RETRY_LIMIT) -> dict:
         "interventions": 0,
         "duration_s": duration,
         "final_response": final_text,
+        "rate_limited": any_rate_limited,
     }

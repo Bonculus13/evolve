@@ -39,17 +39,20 @@ def get_key(key: str, default=None):
 def append_to_list(key: str, item):
     data = get_all()
     lst = data.get(key, [])
+    if key in {"learned_patterns", "persistent_notes"} and item in lst:
+        return
     lst.append(item)
     data[key] = lst
     _save_file(MEMORY_FILE, data)
 
 
 def record_task(task: str, success: bool, approach: str, interventions: int,
-                duration_s: float, notes: str = ""):
+                duration_s: float, notes: str = "", rate_limited: bool = False):
     entry = {
         "timestamp": time.time(),
         "task": task,
         "success": success,
+        "rate_limited": rate_limited,
         "approach": approach,
         "human_interventions": interventions,
         "duration_s": round(duration_s, 2),
