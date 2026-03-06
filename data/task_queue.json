@@ -1,5 +1,4 @@
 [
-  "Add a 'summarize_changes' tool that reads git log and git diff and returns a human-readable summary of recent changes.",
   "Improve dashboard.py: add a 'Files' tab that shows all source files with their sizes and last-modified timestamps.",
   "Add rate limiting awareness to agent.py: if claude CLI returns a rate limit error, exponentially back off (5s, 15s, 45s) before retrying.",
   "Create a 'health_check' endpoint in dashboard.py at /api/health that returns system info: Python version, disk usage, memory stats, and process uptime.",

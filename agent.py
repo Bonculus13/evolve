@@ -50,8 +50,13 @@ def _build_prompt(task: str) -> str:
     return f"{system}\n\n## Task\n{task}"
 
 
+CLI_RETRY_LIMIT = 2
+CLI_RETRY_DELAY = 5
+
+
 def _run_once(prompt: str, env: dict, label: str = "") -> tuple[bool, list, list, str, object, str]:
-    """Run claude CLI with prompt. Returns (success, output_lines, tool_calls, final_text, proc, stderr)."""
+    """Run claude CLI with prompt. Returns (success, output_lines, tool_calls, final_text, proc, stderr).
+    Retries up to CLI_RETRY_LIMIT times with CLI_RETRY_DELAY seconds between attempts on subprocess failure."""
     cmd = [
         CLAUDE_BIN,
         "--print",
@@ -61,84 +66,98 @@ def _run_once(prompt: str, env: dict, label: str = "") -> tuple[bool, list, list
         "--add-dir", str(SOURCE_DIR),
     ]
 
-    if label:
-        print(f"[AGENT] Spawning claude CLI {label}...", flush=True)
-    else:
-        print(f"[AGENT] Spawning claude CLI (subscription mode)...", flush=True)
+    for cli_attempt in range(1 + CLI_RETRY_LIMIT):
+        if label:
+            print(f"[AGENT] Spawning claude CLI {label}...", flush=True)
+        else:
+            print(f"[AGENT] Spawning claude CLI (subscription mode)...", flush=True)
 
-    success = False
-    output_lines = []
-    tool_calls = []
-    final_text = ""
-    stderr = ""
-    proc = None
+        if cli_attempt > 0:
+            print(f"[AGENT] CLI retry {cli_attempt}/{CLI_RETRY_LIMIT} after {CLI_RETRY_DELAY}s delay...", flush=True)
 
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env,
-            cwd=str(SOURCE_DIR),
-        )
+        success = False
+        output_lines = []
+        tool_calls = []
+        final_text = ""
+        stderr = ""
+        proc = None
+        subprocess_failed = False
 
-        proc.stdin.write(prompt)
-        proc.stdin.close()
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+                cwd=str(SOURCE_DIR),
+            )
 
-        for raw_line in proc.stdout:
-            raw_line = raw_line.strip()
-            if not raw_line:
-                continue
-            output_lines.append(raw_line)
+            proc.stdin.write(prompt)
+            proc.stdin.close()
 
-            try:
-                event = json.loads(raw_line)
-            except json.JSONDecodeError:
-                print(f"  {raw_line}")
-                continue
+            for raw_line in proc.stdout:
+                raw_line = raw_line.strip()
+                if not raw_line:
+                    continue
+                output_lines.append(raw_line)
 
-            etype = event.get("type", "")
+                try:
+                    event = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    print(f"  {raw_line}")
+                    continue
 
-            if etype == "assistant":
-                content = event.get("message", {}).get("content", [])
-                for block in content:
-                    if isinstance(block, dict):
-                        if block.get("type") == "text":
-                            txt = block.get("text", "").strip()
-                            if txt:
-                                print(f"\n[Claude] {txt[:500]}", flush=True)
-                                final_text = txt
-                        elif block.get("type") == "tool_use":
-                            name = block.get("name", "")
-                            inp = block.get("input", {})
-                            summary = str(inp)[:120]
-                            print(f"[TOOL] {name}({summary})", flush=True)
-                            tool_calls.append(name)
+                etype = event.get("type", "")
 
-            elif etype == "result":
-                result_type = event.get("subtype", "")
-                if result_type == "success":
-                    final_text = event.get("result", "")
-                    print(f"\n[RESULT] {final_text[:300]}", flush=True)
-                    success = True
-                elif result_type == "error_max_turns":
-                    print("[WARN] Max turns reached — task incomplete, marking as failure")
-                    success = False
-                else:
-                    print(f"[RESULT] {event}")
+                if etype == "assistant":
+                    content = event.get("message", {}).get("content", [])
+                    for block in content:
+                        if isinstance(block, dict):
+                            if block.get("type") == "text":
+                                txt = block.get("text", "").strip()
+                                if txt:
+                                    print(f"\n[Claude] {txt[:500]}", flush=True)
+                                    final_text = txt
+                            elif block.get("type") == "tool_use":
+                                name = block.get("name", "")
+                                inp = block.get("input", {})
+                                summary = str(inp)[:120]
+                                print(f"[TOOL] {name}({summary})", flush=True)
+                                tool_calls.append(name)
 
-        stderr = proc.stderr.read()
-        proc.wait()
+                elif etype == "result":
+                    result_type = event.get("subtype", "")
+                    if result_type == "success":
+                        final_text = event.get("result", "")
+                        print(f"\n[RESULT] {final_text[:300]}", flush=True)
+                        success = True
+                    elif result_type == "error_max_turns":
+                        print("[WARN] Max turns reached — task incomplete, marking as failure")
+                        success = False
+                    else:
+                        print(f"[RESULT] {event}")
 
-        if proc.returncode not in (0, None) and not success:
-            print(f"[ERROR] claude exited {proc.returncode}")
-            if stderr:
-                print(f"  stderr: {stderr[:300]}")
+            stderr = proc.stderr.read()
+            proc.wait()
 
-    except Exception as e:
-        print(f"[ERROR] {e}")
+            if proc.returncode not in (0, None) and not success:
+                print(f"[ERROR] claude exited {proc.returncode}")
+                if stderr:
+                    print(f"  stderr: {stderr[:300]}")
+                subprocess_failed = True
+
+        except Exception as e:
+            print(f"[ERROR] {e}")
+            subprocess_failed = True
+
+        # If subprocess succeeded (even if task failed), or we exhausted retries, return
+        if not subprocess_failed or cli_attempt >= CLI_RETRY_LIMIT:
+            break
+
+        # Wait before retrying
+        time.sleep(CLI_RETRY_DELAY)
 
     return success, output_lines, tool_calls, final_text, proc, stderr
 
