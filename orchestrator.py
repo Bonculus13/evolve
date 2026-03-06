@@ -66,6 +66,7 @@ ENGINE = EvolutionEngine()
 LAST_RESULTS: list[bool] = []
 TASK_QUEUE_FILE = DATA_DIR / "task_queue.json"
 NEXT_TASK_FILE = DATA_DIR / "next_task.json"
+_AUTH_PROBE_CACHE = {"ts": 0.0, "ok": False}
 
 ORCHESTRATOR_CAPABILITY_TAGS = [
     "task_orchestration",
@@ -305,6 +306,47 @@ def _apply_provider_policy() -> None:
         os.environ["EVOLVE_PROVIDER_ORDER"] = providers
 
 
+def _auth_guard_active() -> bool:
+    """Stop autonomous loops when provider auth is clearly missing."""
+    if os.environ.get("EVOLVE_AUTH_GUARD", "0") != "1":
+        return False
+    history = mem.get_all().get("task_history", [])
+    recent = history[-3:]
+    if len(recent) < 2:
+        return False
+    failed = [r for r in recent if not r.get("success")]
+    if len(failed) < 2:
+        return False
+    suspected = all("/login" in str(r.get("notes", "")).lower() or "not logged in" in str(r.get("notes", "")).lower() for r in failed[-2:])
+    if not suspected:
+        return False
+    return not _provider_auth_probe()
+
+
+def _provider_auth_probe() -> bool:
+    """Live probe to avoid stale auth guard state."""
+    now = time.time()
+    if now - _AUTH_PROBE_CACHE["ts"] < 60:
+        return bool(_AUTH_PROBE_CACHE["ok"])
+    try:
+        cmd = [agent.CLAUDE_BIN, "--print"]
+        proc = subprocess.run(
+            cmd,
+            input="Reply with OK only.",
+            capture_output=True,
+            text=True,
+            cwd=str(Path(__file__).parent),
+            timeout=20,
+        )
+        combined = (proc.stdout + "\n" + proc.stderr).lower()
+        ok = "not logged in" not in combined and "please run /login" not in combined and proc.returncode == 0
+    except Exception:
+        ok = False
+    _AUTH_PROBE_CACHE["ts"] = now
+    _AUTH_PROBE_CACHE["ok"] = ok
+    return ok
+
+
 def _run_single_cycle(cycle_number: int) -> dict:
     _apply_provider_policy()
     queued = _pop_task()
@@ -533,6 +575,9 @@ def auto_evolve_loop(max_cycles: int | None = None, pause_s: int = 5) -> None:
         if max_cycles and cycle >= max_cycles:
             print(f"\n[Done] Completed {cycle} cycles.")
             break
+        if _auth_guard_active():
+            print("\n[AUTH GUARD] Provider login required. Run provider login, then restart auto-evolve.")
+            break
 
         cycle += 1
         print(f"\n{'─'*60}")
@@ -583,6 +628,9 @@ def schedule_loop(interval_s: int, max_cycles: int | None = None) -> None:
     while _running:
         if max_cycles and cycle >= max_cycles:
             print(f"\n[Done] Completed {cycle} scheduled cycles.")
+            break
+        if _auth_guard_active():
+            print("\n[AUTH GUARD] Provider login required. Run provider login, then restart schedule mode.")
             break
 
         cycle += 1
