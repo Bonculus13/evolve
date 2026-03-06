@@ -1,5 +1,4 @@
 [
-  "Create a 'health_check' endpoint in dashboard.py at /api/health that returns system info: Python version, disk usage, memory stats, and process uptime.",
   "Add Google Drive sync to the auto-evolve loop: after every 5 cycles, automatically sync the project to Google Drive using profiler.sync_to_gdrive().",
   "Improve profiler.py: add a function that detects available GPUs (Metal, CUDA) and reports hardware capabilities useful for ML workloads.",
   "Add a 'schedule' mode to orchestrator.py that runs evolve cycles on a cron-like schedule (e.g., every hour) using time-based checks.",

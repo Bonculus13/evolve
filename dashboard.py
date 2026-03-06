@@ -10,6 +10,8 @@ import time
 import threading
 import subprocess
 import os
+import platform
+import shutil
 from pathlib import Path
 from flask import Flask, jsonify, request, Response
 
@@ -19,6 +21,7 @@ import memory as mem
 
 app = Flask(__name__)
 PORT = 7842
+_dashboard_start_ts = time.time()
 
 # Shared state
 _state = {
@@ -439,6 +442,85 @@ def files():
         except OSError:
             continue
     return jsonify({"files": result})
+
+
+@app.route("/api/health")
+def health_check():
+    """Return system health info: Python version, disk, memory, uptime."""
+    # Python version
+    py_version = sys.version
+
+    # Disk usage for the volume containing the project
+    disk = shutil.disk_usage(str(SOURCE_DIR))
+    disk_info = {
+        "total_gb": round(disk.total / (1 << 30), 2),
+        "used_gb": round(disk.used / (1 << 30), 2),
+        "free_gb": round(disk.free / (1 << 30), 2),
+        "percent_used": round(disk.used / disk.total * 100, 1),
+    }
+
+    # Memory stats via vm_stat on macOS, fallback for others
+    mem_info = {}
+    try:
+        if platform.system() == "Darwin":
+            vm = subprocess.check_output(["vm_stat"], text=True, timeout=5)
+            page_size = 16384
+            for line in vm.splitlines():
+                if "page size of" in line:
+                    page_size = int(line.split()[-2])
+                    break
+            pages = {}
+            for line in vm.splitlines():
+                if ":" in line and "page size" not in line:
+                    key, val = line.split(":", 1)
+                    val = val.strip().rstrip(".")
+                    if val.isdigit():
+                        pages[key.strip()] = int(val)
+            free = pages.get("Pages free", 0)
+            active = pages.get("Pages active", 0)
+            inactive = pages.get("Pages inactive", 0)
+            wired = pages.get("Pages wired down", 0)
+            mem_info = {
+                "active_gb": round(active * page_size / (1 << 30), 2),
+                "wired_gb": round(wired * page_size / (1 << 30), 2),
+                "inactive_gb": round(inactive * page_size / (1 << 30), 2),
+                "free_gb": round(free * page_size / (1 << 30), 2),
+            }
+        else:
+            with open("/proc/meminfo") as f:
+                mi = {}
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        mi[parts[0].rstrip(":")] = int(parts[1])
+                total = mi.get("MemTotal", 0)
+                avail = mi.get("MemAvailable", 0)
+                mem_info = {
+                    "total_gb": round(total / (1 << 20), 2),
+                    "available_gb": round(avail / (1 << 20), 2),
+                    "percent_used": round((total - avail) / total * 100, 1) if total else 0,
+                }
+    except Exception:
+        mem_info = {"error": "Could not read memory stats"}
+
+    # Process uptime
+    uptime_s = round(time.time() - _dashboard_start_ts, 1)
+    if uptime_s >= 3600:
+        uptime_str = f"{uptime_s / 3600:.1f}h"
+    elif uptime_s >= 60:
+        uptime_str = f"{uptime_s / 60:.1f}m"
+    else:
+        uptime_str = f"{uptime_s:.0f}s"
+
+    return jsonify({
+        "status": "ok",
+        "python_version": py_version,
+        "platform": platform.platform(),
+        "disk": disk_info,
+        "memory": mem_info,
+        "uptime_seconds": uptime_s,
+        "uptime_human": uptime_str,
+    })
 
 
 @app.route("/api/clear_log", methods=["POST"])
