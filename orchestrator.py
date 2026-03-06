@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import agent
 import memory as mem
 import portfolio
+import profiler
 from config import PERMISSIONS_FILE, EVOLUTION_LOG, DATA_DIR
 
 
@@ -214,6 +215,12 @@ def auto_evolve_loop(max_cycles: int | None = None, pause_s: int = 5):
 
         # Auto-commit and push after each successful cycle
         _auto_push(cycle)
+
+        # Sync to Google Drive every 5 cycles
+        if cycle % 5 == 0:
+            print(f"[GDRIVE] Syncing to Google Drive...")
+            result = profiler.sync_to_gdrive()
+            print(f"[GDRIVE] {result}")
 
         if not _running:
             break
