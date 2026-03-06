@@ -208,6 +208,9 @@ async function poll() {
     (data.provider && data.provider.active_provider) ? data.provider.active_provider : 'unknown';
   document.getElementById('provider-reason').textContent =
     (data.provider && data.provider.reason) ? '(' + data.provider.reason + ')' : '';
+  if (data.engine && data.engine.auth_failures > 0) {
+    document.getElementById('provider-reason').textContent += ' auth needed';
+  }
   if (data.running && !startTime) startTime = Date.now();
   if (!data.running) startTime = null;
   if (startTime) {
@@ -391,6 +394,7 @@ def status():
             "last_fitness": DASH_ENGINE.state.get("last_fitness", 0.0),
             "curriculum_stage": DASH_ENGINE.state.get("curriculum_stage", "unknown"),
             "milestone_level": DASH_ENGINE.state.get("milestone_level", 0),
+            "auth_failures": DASH_ENGINE.state.get("failure_classes", {}).get("auth", 0),
         },
         **stats,
     })

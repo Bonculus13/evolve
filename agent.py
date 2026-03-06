@@ -74,6 +74,14 @@ _RATE_LIMIT_PATTERNS = [
     "resets",
 ]
 
+_AUTH_FAILURE_PATTERNS = [
+    "not logged in",
+    "please run /login",
+    "authentication",
+    "auth required",
+    "login required",
+]
+
 DEFAULT_PROVIDER_ORDER = ["claude", "gemini", "codex"]
 
 
@@ -113,6 +121,11 @@ def _is_rate_limit_error(stderr: str, output_lines: list) -> bool:
     """Check if the error is a rate limit / overload error."""
     text = (stderr + " " + " ".join(output_lines[-5:])).lower()
     return any(p in text for p in _RATE_LIMIT_PATTERNS)
+
+
+def _is_auth_failure(stderr: str, output_lines: list, final_text: str = "") -> bool:
+    text = (stderr + " " + " ".join(output_lines[-8:]) + " " + (final_text or "")).lower()
+    return any(p in text for p in _AUTH_FAILURE_PATTERNS)
 
 
 def _extract_reset_cooldown_seconds(text: str) -> int | None:
@@ -259,11 +272,19 @@ def _run_once(prompt: str, env: dict, label: str = "", provider: str = "claude")
             stderr = proc.stderr.read()
             proc.wait()
 
+            if success and _is_auth_failure(stderr, output_lines, final_text):
+                print("[ERROR] Authentication/login required - marking task failed")
+                success = False
+
             if not success and proc.returncode == 0 and output_lines and not _is_rate_limit_error(stderr, output_lines):
                 # Some CLIs return successful plain/JSON lines without a "result.success" event.
                 if not final_text:
                     final_text = output_lines[-1][:1000]
                 success = True
+
+            if success and _is_auth_failure(stderr, output_lines, final_text):
+                print("[ERROR] Authentication/login required - marking task failed")
+                success = False
 
             if proc.returncode not in (0, None) and not success:
                 print(f"[ERROR] {provider} exited {proc.returncode}")
@@ -339,6 +360,9 @@ def _run_once(prompt: str, env: dict, label: str = "", provider: str = "claude")
                                 final_text = msg.strip()
                     stderr = proc.stderr.read()
                     proc.wait()
+                    if success and _is_auth_failure(stderr, output_lines, final_text):
+                        print("[ERROR] Authentication/login required - marking task failed")
+                        success = False
                     if proc.returncode not in (0, None) and not success:
                         print(f"[ERROR] {provider} exited {proc.returncode}")
                         if stderr:

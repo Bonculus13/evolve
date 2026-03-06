@@ -169,6 +169,8 @@ class EvolutionEngine:
 
     def classify_failure(self, notes: str) -> str:
         text = (notes or "").lower()
+        if "not logged in" in text or "/login" in text or "auth" in text:
+            return "auth"
         if "rate_limited" in text or "429" in text:
             return "rate_limit"
         if "import" in text or "module" in text:
@@ -181,6 +183,7 @@ class EvolutionEngine:
 
     def adaptive_retry_budget(self, failure_class: str) -> int:
         mapping = {
+            "auth": 0,
             "rate_limit": 1,
             "import_error": 2,
             "permission": 1,

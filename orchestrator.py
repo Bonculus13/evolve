@@ -360,6 +360,10 @@ def _run_single_cycle(cycle_number: int) -> dict:
             novelty = ENGINE.estimate_novelty(files_changed, t["style"])
             regression_risk = 0.45 if not success else 0.15
             utility_est = 0.75 if success else 0.25
+            if success and not files_changed:
+                # Prevent no-op responses from looking like high-value wins.
+                utility_est = 0.15
+                regression_risk = max(regression_risk, 0.35)
             fit = ENGINE.fitness_score(success, duration, novelty, regression_risk, utility_est)
             candidates.append(
                 {
@@ -404,6 +408,9 @@ def _run_single_cycle(cycle_number: int) -> dict:
     novelty = float(chosen.get("novelty", ENGINE.estimate_novelty(files_changed, chosen.get("style", ""))))
     risk = float(chosen.get("risk", 0.2 if success else 0.6))
     utility_est = float(chosen.get("utility", 0.7 if success else 0.2))
+    if success and not files_changed:
+        utility_est = min(utility_est, 0.15)
+        risk = max(risk, 0.35)
     fitness = float(chosen.get("fitness", ENGINE.fitness_score(success, duration_s, novelty, risk, utility_est)))
 
     failure_class = "none"
