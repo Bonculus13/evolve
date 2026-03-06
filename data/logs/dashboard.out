@@ -7,7 +7,8 @@
  * Running on http://127.0.0.1:7842
  * Running on http://10.210.130.124:7842
 [33mPress CTRL+C to quit[0m
-127.0.0.1 - - [06/Mar/2026 09:07:22] "GET / HTTP/1.1" 200 -
-127.0.0.1 - - [06/Mar/2026 09:07:23] "GET /api/status HTTP/1.1" 200 -
-127.0.0.1 - - [06/Mar/2026 09:07:23] "GET /api/memory HTTP/1.1" 200 -
-127.0.0.1 - - [06/Mar/2026 09:07:23] "GET /api/files HTTP/1.1" 200 -
+127.0.0.1 - - [06/Mar/2026 09:09:26] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [06/Mar/2026 09:09:26] "GET /api/status HTTP/1.1" 200 -
+127.0.0.1 - - [06/Mar/2026 09:09:26] "GET /api/memory HTTP/1.1" 200 -
+127.0.0.1 - - [06/Mar/2026 09:09:26] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+127.0.0.1 - - [06/Mar/2026 09:09:26] "GET /api/files HTTP/1.1" 200 -
