@@ -2,10 +2,12 @@
 [Dashboard] Starting at http://localhost:7842
  * Serving Flask app 'dashboard'
  * Debug mode: off
-Operation not permitted
-5:15: syntax error: A “"” can’t go after this identifier. (-2740)
-2026-03-06 09:07:12.141 osascript[70421:2414303] Connection Invalid error for service com.apple.hiservices-xpcservice.
-2026-03-06 09:07:12.141 osascript[70421:2414301] Error received in message reply handler: Connection invalid
-122:123: syntax error: Expected end of line, etc. but found “"”. (-2741)
-2026-03-06 09:07:12.485 osascript[70422:2414310] Connection Invalid error for service com.apple.hiservices-xpcservice.
-2026-03-06 09:07:12.485 osascript[70422:2414309] Error received in message reply handler: Connection invalid
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:7842
+ * Running on http://10.210.130.124:7842
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [06/Mar/2026 09:07:22] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [06/Mar/2026 09:07:23] "GET /api/status HTTP/1.1" 200 -
+127.0.0.1 - - [06/Mar/2026 09:07:23] "GET /api/memory HTTP/1.1" 200 -
+127.0.0.1 - - [06/Mar/2026 09:07:23] "GET /api/files HTTP/1.1" 200 -
