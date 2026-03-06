@@ -1,11 +1,12 @@
 {
   "created_at": 1772828825.902176,
   "goal_pack": "utility",
-  "cycle_count": 3,
+  "cycle_count": 4,
   "curriculum_stage": "aggressive_autonomy",
   "milestone_level": 0,
   "last_fitness": 0.9325,
   "fitness_history": [
+    0.9325,
     0.9325,
     0.9325,
     0.9325
@@ -37,7 +38,7 @@
       "Continuous weekly retrospective auto-actions",
       "Long-horizon architecture mutation campaigns"
     ],
-    "updated_at": 1772828831.745877
+    "updated_at": 1772828835.204671
   },
   "bandit": {
     "arms": {
@@ -46,8 +47,8 @@
         "reward": 2.7975
       },
       "assess": {
-        "n": 0,
-        "reward": 0.0
+        "n": 1,
+        "reward": 0.9325
       },
       "stabilize": {
         "n": 0,
@@ -61,24 +62,29 @@
     "epsilon": 0.18
   },
   "regression_fingerprints": [
-    "3f522ffb507de42a9c"
+    "3f522ffb507de42a9c",
+    "8a799d8c520f371573"
   ],
   "capability_graph": {},
   "tool_policy": {},
   "benchmark": {
     "latency_ms": [
       795.6731,
-      770.4809
+      770.4809,
+      758.7702
     ],
     "success_rate": [
+      1.0,
       1.0,
       1.0
     ],
     "throughput": [
       1.0,
+      1.0,
       1.0
     ],
     "prompt_quality": [
+      0.9595,
       0.9595,
       0.9595
     ]
