@@ -1,5 +1,4 @@
 [
-  "Add session persistence to agent.py: save the claude session ID so tasks can be resumed if interrupted.",
   "Improve git_release.py: auto-generate release notes by diffing the current HEAD against the last tag and summarizing changes.",
   "Add a 'benchmark' mode that runs a set of known tasks and measures success rate, duration, and token usage to track performance over time.",
   "Create an 'agent_config.json' file that lets the user configure model, max_tokens, pause_between_cycles, and other settings without editing Python code."
