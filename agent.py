@@ -178,7 +178,7 @@ def _run_once(prompt: str, env: dict, label: str = "", provider: str = "claude")
 
             if provider == "claude":
                 proc.stdin.write(prompt)
-                proc.stdin.close()
+            proc.stdin.close()
 
             for raw_line in proc.stdout:
                 raw_line = raw_line.strip()
@@ -273,7 +273,7 @@ def _run_once(prompt: str, env: dict, label: str = "", provider: str = "claude")
                     )
                     if provider == "claude":
                         proc.stdin.write(prompt)
-                        proc.stdin.close()
+                    proc.stdin.close()
                     for raw_line in proc.stdout:
                         raw_line = raw_line.strip()
                         if not raw_line:
