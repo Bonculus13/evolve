@@ -5,6 +5,8 @@ Each function is called when Claude requests a tool use.
 import subprocess
 import json
 import time
+import urllib.request
+import urllib.error
 from pathlib import Path
 import permissions
 import memory as mem
@@ -129,6 +131,22 @@ TOOL_DEFS = [
         },
     },
     {
+        "name": "http_get",
+        "description": (
+            "Fetch the content of a URL via HTTP GET. Useful for researching AI news, "
+            "fetching documentation, or reading web content. Returns the response body as text. "
+            "Respects a 30-second timeout by default."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "The URL to fetch"},
+                "timeout": {"type": "integer", "description": "Timeout in seconds (default 30)"},
+            },
+            "required": ["url"],
+        },
+    },
+    {
         "name": "git_auto_commit",
         "description": (
             "Stage all changes in the evolve/ directory, commit with a descriptive message, "
@@ -183,6 +201,8 @@ def execute(tool_name: str, tool_input: dict, tool_use_id: str,
             return ToolResult(tool_use_id, mem.get_memory_context())
         elif tool_name == "list_self":
             return _list_self(tool_use_id)
+        elif tool_name == "http_get":
+            return _http_get(tool_input, tool_use_id)
         elif tool_name == "git_auto_commit":
             return _git_auto_commit(tool_input, tool_use_id, intervention_counter)
         else:
@@ -349,6 +369,25 @@ def _list_self(tid: str) -> ToolResult:
     files = sorted(SOURCE_DIR.glob("*.py"))
     lines = [f"{f.name} ({f.stat().st_size} bytes)" for f in files]
     return ToolResult(tid, "\n".join(lines))
+
+
+def _http_get(inp: dict, tid: str) -> ToolResult:
+    url = inp["url"]
+    timeout = inp.get("timeout", 30)
+    req = urllib.request.Request(url, headers={"User-Agent": "evolve-agent/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read()
+            # Try to decode as text; truncate to 50KB to avoid blowing up context
+            text = body.decode("utf-8", errors="replace")[:50_000]
+            _log_action("http_get", url)
+            return ToolResult(tid, text)
+    except urllib.error.HTTPError as e:
+        return ToolResult(tid, f"HTTP {e.code}: {e.reason}", is_error=True)
+    except urllib.error.URLError as e:
+        return ToolResult(tid, f"URL error: {e.reason}", is_error=True)
+    except Exception as e:
+        return ToolResult(tid, f"http_get failed: {e}", is_error=True)
 
 
 def _git_auto_commit(inp: dict, tid: str, counter: list) -> ToolResult:

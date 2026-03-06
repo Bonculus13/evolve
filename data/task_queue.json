@@ -1,7 +1,4 @@
 [
-  "Add an 'http_get' tool to tools.py that fetches a URL and returns the content. Useful for researching AI news or fetching documentation.",
-  "Create a README.md for the GitHub repo that explains what this project is, how to install/run it, and its self-evolving architecture.",
-  "Add error retry logic to agent.py: if the claude CLI subprocess fails, retry up to 2 times with a 5s delay before giving up.",
   "Add a 'summarize_changes' tool that reads git log and git diff and returns a human-readable summary of recent changes.",
   "Improve dashboard.py: add a 'Files' tab that shows all source files with their sizes and last-modified timestamps.",
   "Add rate limiting awareness to agent.py: if claude CLI returns a rate limit error, exponentially back off (5s, 15s, 45s) before retrying.",
