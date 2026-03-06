@@ -119,6 +119,8 @@ def _save_provider_state(active: str, reason: str = "", attempts: dict | None = 
 
 def _is_rate_limit_error(stderr: str, output_lines: list) -> bool:
     """Check if the error is a rate limit / overload error."""
+    if _is_auth_failure(stderr, output_lines):
+        return False
     text = (stderr + " " + " ".join(output_lines[-5:])).lower()
     return any(p in text for p in _RATE_LIMIT_PATTERNS)
 
@@ -377,6 +379,8 @@ def _run_once(prompt: str, env: dict, label: str = "", provider: str = "claude")
             break
 
         # If subprocess succeeded (even if task failed), or we exhausted retries, return
+        if _is_auth_failure(stderr, output_lines, final_text):
+            break
         if not subprocess_failed or cli_attempt >= CLI_RETRY_LIMIT:
             break
 
@@ -457,10 +461,13 @@ def run_task(task: str, max_retries: int = TROUBLESHOOTING_RETRY_LIMIT) -> dict:
         success, output_lines, tool_calls, final_text, proc, stderr = _run_once(
             prompt, env, provider=provider
         )
+        auth_blocked = _is_auth_failure(stderr, output_lines, final_text)
+        if auth_blocked:
+            print(f"[AGENT] {provider} auth/login required; skipping further retries for this provider.")
 
         # Structured troubleshooting retries on failure, within the same provider.
         for attempt_idx in range(1, max_retries + 1):
-            if success:
+            if success or auth_blocked:
                 break
             rc, failure_signal = _extract_failure_context(final_text, stderr, output_lines, proc)
             retry_prefix = _build_troubleshooting_prefix(attempt_idx, rc, failure_signal)
@@ -477,6 +484,10 @@ def run_task(task: str, max_retries: int = TROUBLESHOOTING_RETRY_LIMIT) -> dict:
                 proc = proc2
             if stderr2:
                 stderr = stderr2
+            if _is_auth_failure(stderr, output_lines, final_text):
+                auth_blocked = True
+                print(f"[AGENT] {provider} auth/login required during troubleshooting; stopping retries.")
+                break
 
         attempts_by_provider[provider] = "success" if success else "failed"
         if success:

@@ -1,7 +1,7 @@
 {
   "created_at": 1772828825.902176,
   "goal_pack": "utility",
-  "cycle_count": 12,
+  "cycle_count": 13,
   "curriculum_stage": "aggressive_autonomy",
   "milestone_level": 3,
   "last_fitness": 0.4625,
@@ -17,6 +17,7 @@
     0.9325,
     0.9325,
     0.4038,
+    0.4625,
     0.4625
   ],
   "weekly_retrospectives": [
@@ -59,8 +60,8 @@
         "reward": 2.3275
       },
       "stabilize": {
-        "n": 2,
-        "reward": 1.865
+        "n": 3,
+        "reward": 2.3275
       },
       "challenge": {
         "n": 4,
@@ -129,7 +130,7 @@
   },
   "failure_classes": {
     "none": 0,
-    "auth": 2
+    "auth": 3
   },
   "portfolio_transfers": [],
   "last_week_key": "2026-W10"
