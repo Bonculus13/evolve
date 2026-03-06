@@ -4,3 +4,8 @@
  * Debug mode: off
 Operation not permitted
 5:15: syntax error: A “"” can’t go after this identifier. (-2740)
+2026-03-06 09:07:12.141 osascript[70421:2414303] Connection Invalid error for service com.apple.hiservices-xpcservice.
+2026-03-06 09:07:12.141 osascript[70421:2414301] Error received in message reply handler: Connection invalid
+122:123: syntax error: Expected end of line, etc. but found “"”. (-2741)
+2026-03-06 09:07:12.485 osascript[70422:2414310] Connection Invalid error for service com.apple.hiservices-xpcservice.
+2026-03-06 09:07:12.485 osascript[70422:2414309] Error received in message reply handler: Connection invalid
