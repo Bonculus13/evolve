@@ -127,6 +127,36 @@ class EvolutionEngine:
     def get_goal_pack(self) -> str:
         return self.state.get("goal_pack", "utility")
 
+    def momentum(self, window: int = 8) -> int:
+        """Return current streak: positive = consecutive successes, negative = consecutive failures."""
+        hist = self.state.get("fitness_history", [])
+        if not hist:
+            return 0
+        # Use threshold of 0.5 to classify success/failure from fitness
+        streak = 0
+        direction = None
+        for f in reversed(hist[-window:]):
+            is_success = f >= 0.5
+            if direction is None:
+                direction = is_success
+            if is_success == direction:
+                streak += 1
+            else:
+                break
+        return streak if direction else -streak
+
+    def adaptive_epsilon(self) -> float:
+        """Modulate exploration rate based on momentum. Winning streak -> exploit. Losing -> explore."""
+        base = float(self.state.get("bandit", {}).get("epsilon", 0.18))
+        m = self.momentum()
+        if m >= 3:
+            # Winning streak: halve epsilon (exploit what works)
+            return max(0.05, base * 0.5)
+        if m <= -3:
+            # Losing streak: double epsilon (explore alternatives)
+            return min(0.50, base * 2.0)
+        return base
+
     def choose_cycle_type(self, has_queued_task: bool = False) -> str:
         if has_queued_task:
             return "queued"
@@ -139,7 +169,7 @@ class EvolutionEngine:
             return "challenge"
 
         arms = self.state.get("bandit", {}).get("arms", {})
-        epsilon = float(self.state.get("bandit", {}).get("epsilon", 0.18))
+        epsilon = self.adaptive_epsilon()
         total_n = max(1, sum(max(0, int(v.get("n", 0))) for v in arms.values()))
 
         if random.random() < epsilon:
@@ -414,6 +444,8 @@ class EvolutionEngine:
             "unlocked": milestone["unlocked"],
             "goal_pack": self.get_goal_pack(),
             "provider": provider,
+            "momentum": self.momentum(),
+            "epsilon": round(self.adaptive_epsilon(), 4),
         }
         self.log_event({"ts": time.time(), "event": "cycle_recorded", **summary})
         self.save()

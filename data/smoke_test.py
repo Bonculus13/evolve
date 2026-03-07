@@ -320,6 +320,61 @@ def test_hard_provider_failure():
 check("agent._is_hard_provider_failure detects codex panics", test_hard_provider_failure)
 
 
+# 21. momentum returns correct streak direction
+def test_momentum():
+    from evolution_engine import EvolutionEngine
+    from pathlib import Path
+    import tempfile, json
+    tmp = Path(tempfile.mktemp(suffix=".json"))
+    # Winning streak: 4 high-fitness values
+    state = {"fitness_history": [0.7, 0.8, 0.6, 0.75]}
+    tmp.write_text(json.dumps(state))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        m = engine.momentum()
+        assert m > 0, f"all-success history should give positive momentum, got {m}"
+    finally:
+        tmp.unlink(missing_ok=True)
+    # Losing streak: 4 low-fitness values
+    tmp.write_text(json.dumps({"fitness_history": [0.3, 0.2, 0.1, 0.4]}))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        m = engine.momentum()
+        assert m < 0, f"all-failure history should give negative momentum, got {m}"
+    finally:
+        tmp.unlink(missing_ok=True)
+
+check("evolution_engine.momentum streak detection", test_momentum)
+
+
+# 22. adaptive_epsilon modulates correctly
+def test_adaptive_epsilon():
+    from evolution_engine import EvolutionEngine
+    from pathlib import Path
+    import tempfile, json
+    tmp = Path(tempfile.mktemp(suffix=".json"))
+    # Winning streak
+    tmp.write_text(json.dumps({"fitness_history": [0.8, 0.9, 0.7, 0.85], "bandit": {"epsilon": 0.18, "arms": {}}}))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        eps = engine.adaptive_epsilon()
+        assert eps < 0.18, f"winning streak should reduce epsilon, got {eps}"
+        assert eps >= 0.05, f"epsilon too low: {eps}"
+    finally:
+        tmp.unlink(missing_ok=True)
+    # Losing streak
+    tmp.write_text(json.dumps({"fitness_history": [0.1, 0.2, 0.3, 0.15], "bandit": {"epsilon": 0.18, "arms": {}}}))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        eps = engine.adaptive_epsilon()
+        assert eps > 0.18, f"losing streak should increase epsilon, got {eps}"
+        assert eps <= 0.50, f"epsilon too high: {eps}"
+    finally:
+        tmp.unlink(missing_ok=True)
+
+check("evolution_engine.adaptive_epsilon modulation", test_adaptive_epsilon)
+
+
 # Report
 print()
 if errors:
