@@ -529,20 +529,36 @@ def _run_single_cycle(cycle_number: int) -> dict:
             )
 
         if not candidates:
-            fallback = agent.run_task(_simulate_dry_run_guard(EVOLVE_TASK), max_retries=retry_budget)
-            candidates = [{
-                "id": "fallback",
-                "style": "mutate",
-                "result": fallback,
-                "fitness": ENGINE.fitness_score(bool(fallback.get("success")), float(fallback.get("duration_s", 0.0)), 0.5, 0.4, 0.5),
-                "hypothesis": "Fallback mutation attempt",
-                "action": "run_task(fallback)",
-                "files": [],
-                "confidence": 0.5,
-                "novelty": 0.5,
-                "risk": 0.4,
-                "utility": 0.5,
-            }]
+            if provider_blocked:
+                print("[CYCLE] Skipping fallback — provider blocked.", flush=True)
+                candidates = [{
+                    "id": "blocked_noop",
+                    "style": "mutate",
+                    "result": {"success": False, "duration_s": 0.0, "final_response": "provider blocked", "rate_limited": True, "provider": "none"},
+                    "fitness": 0.0,
+                    "hypothesis": "Provider blocked — no fallback attempted",
+                    "action": "noop",
+                    "files": [],
+                    "confidence": 0.0,
+                    "novelty": 0.0,
+                    "risk": 0.0,
+                    "utility": 0.0,
+                }]
+            else:
+                fallback = agent.run_task(_simulate_dry_run_guard(EVOLVE_TASK), max_retries=retry_budget)
+                candidates = [{
+                    "id": "fallback",
+                    "style": "mutate",
+                    "result": fallback,
+                    "fitness": ENGINE.fitness_score(bool(fallback.get("success")), float(fallback.get("duration_s", 0.0)), 0.5, 0.4, 0.5),
+                    "hypothesis": "Fallback mutation attempt",
+                    "action": "run_task(fallback)",
+                    "files": [],
+                    "confidence": 0.5,
+                    "novelty": 0.5,
+                    "risk": 0.4,
+                    "utility": 0.5,
+                }]
 
         chosen = max(candidates, key=lambda c: c["fitness"])
 
