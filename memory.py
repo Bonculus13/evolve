@@ -10,7 +10,16 @@ from config import MEMORY_FILE, EVOLUTION_LOG
 
 def _load_file(path: Path) -> dict | list:
     if path.exists():
-        return json.loads(path.read_text())
+        try:
+            return json.loads(path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            # Corrupt file — return safe default and preserve original as .corrupt
+            try:
+                corrupt_path = path.with_suffix(path.suffix + ".corrupt")
+                corrupt_path.write_text(path.read_text())
+            except Exception:
+                pass
+            return {} if path == MEMORY_FILE else []
     return {} if path == MEMORY_FILE else []
 
 

@@ -149,12 +149,16 @@ def _pop_task() -> str | None:
         return None
     try:
         tasks = json.loads(TASK_QUEUE_FILE.read_text())
-        if not tasks:
+        if not isinstance(tasks, list) or not tasks:
             return None
         task = tasks.pop(0)
         TASK_QUEUE_FILE.write_text(json.dumps(tasks, indent=2))
-        return task
-    except Exception:
+        return task if isinstance(task, str) else None
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f"[WARN] Corrupt task queue: {e}", flush=True)
+        return None
+    except Exception as e:
+        print(f"[WARN] Task queue read error: {e}", flush=True)
         return None
 
 

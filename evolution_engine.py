@@ -93,7 +93,19 @@ class EvolutionEngine:
             try:
                 data = json.loads(self.state_file.read_text())
                 if isinstance(data, dict):
+                    # Merge with defaults so new keys are always present
+                    defaults = self._default_state()
+                    for k, v in defaults.items():
+                        if k not in data:
+                            data[k] = v
                     return data
+            except (json.JSONDecodeError, ValueError):
+                # Corrupt state — preserve and reset
+                try:
+                    corrupt = self.state_file.with_suffix(".json.corrupt")
+                    corrupt.write_text(self.state_file.read_text())
+                except Exception:
+                    pass
             except Exception:
                 pass
         return self._default_state()
