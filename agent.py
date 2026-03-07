@@ -485,8 +485,8 @@ def run_task(task: str, max_retries: int = TROUBLESHOOTING_RETRY_LIMIT) -> dict:
         rate_limited=any_rate_limited,
     )
 
-    if not success and any_rate_limited:
-        cooldown_s = _extract_reset_cooldown_seconds(rate_limit_text) or 3600
+    if not success and any_rate_limited and not _is_auth_failure(stderr, output_lines, final_text):
+        cooldown_s = _extract_reset_cooldown_seconds(rate_limit_text) or 300
         print(f"[AGENT] Rate limit cooldown engaged for {cooldown_s}s", flush=True)
         time.sleep(cooldown_s)
 
