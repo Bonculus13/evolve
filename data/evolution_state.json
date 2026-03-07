@@ -1,10 +1,10 @@
 {
   "created_at": 1772828825.902176,
   "goal_pack": "utility",
-  "cycle_count": 18,
+  "cycle_count": 19,
   "curriculum_stage": "architecture",
   "milestone_level": 3,
-  "last_fitness": 0.6599,
+  "last_fitness": 0.6952,
   "fitness_history": [
     0.9325,
     0.9325,
@@ -23,7 +23,8 @@
     0.4625,
     0.3252,
     0.6795,
-    0.6599
+    0.6599,
+    0.6952
   ],
   "weekly_retrospectives": [
     {
@@ -52,13 +53,13 @@
       "Continuous weekly retrospective auto-actions",
       "Long-horizon architecture mutation campaigns"
     ],
-    "updated_at": 1772836875.876265
+    "updated_at": 1772850364.4385679
   },
   "bandit": {
     "arms": {
       "mutate": {
-        "n": 4,
-        "reward": 3.1227
+        "n": 5,
+        "reward": 3.8179
       },
       "assess": {
         "n": 4,
@@ -96,7 +97,8 @@
       758.497,
       782.9399,
       42465.1549,
-      704.0319
+      704.0319,
+      126577.8229
     ],
     "success_rate": [
       1.0,
@@ -109,7 +111,8 @@
       1.0,
       1.0,
       0.0,
-      0.0
+      0.0,
+      1.0
     ],
     "throughput": [
       1.0,
@@ -122,7 +125,8 @@
       1.0,
       1.0,
       0.0235,
-      1.0
+      1.0,
+      0.0079
     ],
     "prompt_quality": [
       0.9595,
@@ -135,7 +139,8 @@
       0.9595,
       0.9595,
       0.6423,
-      0.6775
+      0.6775,
+      0.7959
     ]
   },
   "failure_classes": {

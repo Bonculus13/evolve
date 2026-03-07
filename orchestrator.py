@@ -475,7 +475,12 @@ def _run_single_cycle(cycle_number: int) -> dict:
         }
     else:
         candidates = []
+        provider_blocked = False
         for t in trials:
+            if provider_blocked:
+                print(f"[CYCLE] Skipping trial {t['id']} — provider blocked on prior trial.", flush=True)
+                break
+
             hypothesis = f"Trial {t['style']} should improve {cycle_type} utility with measurable outcome"
             confidence = ENGINE.confidence_score(hypothesis, cycle_type)
             if confidence < 0.35:
@@ -485,6 +490,15 @@ def _run_single_cycle(cycle_number: int) -> dict:
             duration = float(res.get("duration_s", 0.0))
             success = bool(res.get("success"))
             final_text = str(res.get("final_response", ""))
+
+            # Early termination: if provider is auth-blocked or rate-limited, skip remaining trials.
+            if not success and res.get("rate_limited"):
+                provider_blocked = True
+            if not success:
+                failure_text = (final_text or "").lower()
+                if any(p in failure_text for p in agent._AUTH_FAILURE_PATTERNS):
+                    provider_blocked = True
+
             files_changed = _extract_files_from_response(final_text)
             novelty = ENGINE.estimate_novelty(files_changed, t["style"])
             regression_risk = 0.45 if not success else 0.15
