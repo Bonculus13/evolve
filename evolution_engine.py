@@ -175,6 +175,17 @@ class EvolutionEngine:
             return "declining"
         return "flat"
 
+    def fitness_volatility(self, window: int = 8) -> float:
+        """Standard deviation of recent fitness. High = unstable, low = consistent."""
+        hist = self.state.get("fitness_history", [])
+        if len(hist) < 3:
+            return 0.0
+        recent = hist[-window:]
+        n = len(recent)
+        mean = sum(recent) / n
+        variance = sum((v - mean) ** 2 for v in recent) / n
+        return round(variance ** 0.5, 4)
+
     def adaptive_epsilon(self) -> float:
         """Modulate exploration rate based on momentum. Winning streak -> exploit. Losing -> explore."""
         base = float(self.state.get("bandit", {}).get("epsilon", 0.18))
@@ -190,6 +201,11 @@ class EvolutionEngine:
     def choose_cycle_type(self, has_queued_task: bool = False) -> str:
         if has_queued_task:
             return "queued"
+
+        # Volatility-aware cycle bias: high volatility -> stabilize, low + flat -> challenge.
+        vol = self.fitness_volatility()
+        if vol > 0.12 and random.random() < 0.6:
+            return "stabilize"
 
         # Stagnation breaker + challenge cycles make evolution more interesting to watch.
         if self.detect_stagnation(window=8):
@@ -478,6 +494,7 @@ class EvolutionEngine:
             "epsilon": round(self.adaptive_epsilon(), 4),
             "fitness_ema": self.fitness_ema(),
             "fitness_trend": self.fitness_trend(),
+            "volatility": self.fitness_volatility(),
         }
         self.log_event({"ts": time.time(), "event": "cycle_recorded", **summary})
         self.save()

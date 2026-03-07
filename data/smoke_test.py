@@ -440,6 +440,62 @@ def test_fitness_trend():
 check("evolution_engine.fitness_trend direction classification", test_fitness_trend)
 
 
+# 25. fitness_volatility returns sensible values
+def test_fitness_volatility():
+    from evolution_engine import EvolutionEngine
+    from pathlib import Path
+    import tempfile, json
+    tmp = Path(tempfile.mktemp(suffix=".json"))
+    # High volatility: widely spread values
+    tmp.write_text(json.dumps({"fitness_history": [0.1, 0.9, 0.2, 0.8, 0.15, 0.85]}))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        vol = engine.fitness_volatility()
+        assert isinstance(vol, float), f"expected float, got {type(vol)}"
+        assert vol > 0.2, f"highly spread values should have high volatility, got {vol}"
+    finally:
+        tmp.unlink(missing_ok=True)
+    # Low volatility: tightly clustered
+    tmp.write_text(json.dumps({"fitness_history": [0.5, 0.51, 0.49, 0.5, 0.50]}))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        vol = engine.fitness_volatility()
+        assert vol < 0.02, f"tightly clustered should have low volatility, got {vol}"
+    finally:
+        tmp.unlink(missing_ok=True)
+    # Empty/short history
+    tmp.write_text(json.dumps({"fitness_history": [0.5]}))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        assert engine.fitness_volatility() == 0.0, "short history should return 0.0"
+    finally:
+        tmp.unlink(missing_ok=True)
+
+check("evolution_engine.fitness_volatility", test_fitness_volatility)
+
+
+# 26. high volatility biases choose_cycle_type toward stabilize
+def test_volatility_bias():
+    from evolution_engine import EvolutionEngine
+    from pathlib import Path
+    import tempfile, json
+    tmp = Path(tempfile.mktemp(suffix=".json"))
+    # Very high volatility history
+    tmp.write_text(json.dumps({"fitness_history": [0.1, 0.9, 0.1, 0.9, 0.1, 0.9, 0.1, 0.9]}))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        vol = engine.fitness_volatility()
+        assert vol > 0.12, f"test setup: need high vol, got {vol}"
+        # Run 50 trials — stabilize should appear significantly
+        types = [engine.choose_cycle_type() for _ in range(50)]
+        stab_count = types.count("stabilize")
+        assert stab_count > 10, f"high volatility should bias toward stabilize, only got {stab_count}/50"
+    finally:
+        tmp.unlink(missing_ok=True)
+
+check("volatility biases cycle selection toward stabilize", test_volatility_bias)
+
+
 # Report
 print()
 if errors:
