@@ -298,8 +298,12 @@ class EvolutionEngine:
     ) -> float:
         gp = GOAL_PACKS.get(self.get_goal_pack(), GOAL_PACKS["utility"])
         success_v = 1.0 if success else 0.0
+        novelty = max(0.0, min(1.0, novelty))
+        utility_estimate = max(0.0, min(1.0, utility_estimate))
+        regression_risk = max(0.0, min(1.0, regression_risk))
+        duration_s = max(0.0, duration_s)
         speed_v = 1.0 / max(1.0, duration_s / 30.0)
-        risk_v = 1.0 - max(0.0, min(1.0, regression_risk))
+        risk_v = 1.0 - regression_risk
 
         score = (
             gp["success"] * success_v

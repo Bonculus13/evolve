@@ -281,10 +281,21 @@ def _handle_sigint(sig, frame):
 
 def _parse_interval(spec: str) -> int:
     spec = spec.strip().lower()
+    if not spec:
+        raise ValueError("empty interval spec")
     multipliers = {"s": 1, "m": 60, "h": 3600}
     if spec[-1] in multipliers:
-        return int(spec[:-1]) * multipliers[spec[-1]]
-    return int(spec)
+        numeric = spec[:-1]
+        if not numeric:
+            raise ValueError(f"missing numeric value in interval: {spec!r}")
+        val = int(numeric)
+        if val <= 0:
+            raise ValueError(f"interval must be positive, got {val}")
+        return val * multipliers[spec[-1]]
+    val = int(spec)
+    if val <= 0:
+        raise ValueError(f"interval must be positive, got {val}")
+    return val
 
 
 def _fmt_interval(seconds: int) -> str:

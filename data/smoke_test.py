@@ -541,6 +541,101 @@ def test_code_failure_preserves_fitness():
 check("code failures preserve computed fitness in history", test_code_failure_preserves_fitness)
 
 
+# 29. _parse_interval edge cases
+def test_parse_interval():
+    from orchestrator import _parse_interval
+    assert _parse_interval("5m") == 300
+    assert _parse_interval("1h") == 3600
+    assert _parse_interval("30s") == 30
+    assert _parse_interval("120") == 120
+    # Edge cases that should raise
+    for bad in ("", "0m", "-5s", "m", "h"):
+        try:
+            _parse_interval(bad)
+            assert False, f"_parse_interval({bad!r}) should have raised ValueError"
+        except ValueError:
+            pass
+
+check("orchestrator._parse_interval edge cases", test_parse_interval)
+
+
+# 30. fitness_score clamps out-of-range inputs
+def test_fitness_score_clamp():
+    from evolution_engine import EvolutionEngine
+    engine = EvolutionEngine()
+    # Negative novelty, utility > 1, risk > 1, negative duration
+    score = engine.fitness_score(True, -5.0, -0.5, 1.5, 2.0)
+    assert 0.0 <= score <= 1.0, f"clamped fitness out of range: {score}"
+    # All zeros
+    score2 = engine.fitness_score(False, 0.0, 0.0, 0.0, 0.0)
+    assert 0.0 <= score2 <= 1.0, f"zero-input fitness out of range: {score2}"
+
+check("evolution_engine.fitness_score clamps out-of-range inputs", test_fitness_score_clamp)
+
+
+# 31. _provider_order parses env var correctly
+def test_provider_order():
+    from agent import _provider_order, DEFAULT_PROVIDER_ORDER
+    old = os.environ.get("EVOLVE_PROVIDER_ORDER")
+    try:
+        os.environ["EVOLVE_PROVIDER_ORDER"] = "gemini,claude"
+        order = _provider_order()
+        assert order == ["gemini", "claude"], f"unexpected order: {order}"
+        # Invalid providers filtered
+        os.environ["EVOLVE_PROVIDER_ORDER"] = "invalid,claude"
+        order2 = _provider_order()
+        assert order2 == ["claude"], f"invalid provider not filtered: {order2}"
+        # Empty falls back to default
+        os.environ["EVOLVE_PROVIDER_ORDER"] = ""
+        assert _provider_order() == DEFAULT_PROVIDER_ORDER
+    finally:
+        if old is None:
+            os.environ.pop("EVOLVE_PROVIDER_ORDER", None)
+        else:
+            os.environ["EVOLVE_PROVIDER_ORDER"] = old
+
+check("agent._provider_order parses env correctly", test_provider_order)
+
+
+# 32. build_patch_fingerprint is deterministic
+def test_fingerprint_deterministic():
+    from evolution_engine import build_patch_fingerprint
+    fp1 = build_patch_fingerprint(["a.py", "b.py"], "test reason")
+    fp2 = build_patch_fingerprint(["b.py", "a.py"], "test reason")
+    assert fp1 == fp2, "fingerprint should be order-independent"
+    fp3 = build_patch_fingerprint(["a.py"], "different reason")
+    assert fp1 != fp3, "different inputs should produce different fingerprints"
+    assert len(fp1) == 18, f"fingerprint should be 18 chars, got {len(fp1)}"
+
+check("build_patch_fingerprint is deterministic and order-independent", test_fingerprint_deterministic)
+
+
+# 33. _extract_files_from_response heuristic
+def test_extract_files():
+    from orchestrator import _extract_files_from_response
+    files = _extract_files_from_response("Modified agent.py and tools.py for improvement")
+    assert "agent.py" in files, f"should extract agent.py, got {files}"
+    assert "tools.py" in files, f"should extract tools.py, got {files}"
+    # Paths with slashes are excluded
+    files2 = _extract_files_from_response("Check /usr/lib/python3/foo.py")
+    assert len(files2) == 0, f"paths with / should be excluded, got {files2}"
+    # Empty input
+    assert _extract_files_from_response("") == []
+    assert _extract_files_from_response(None) == []
+
+check("orchestrator._extract_files_from_response heuristic", test_extract_files)
+
+
+# 34. tools.execute handles unknown tool gracefully
+def test_unknown_tool():
+    import tools
+    result = tools.execute("nonexistent_tool", {}, "smoke_tid_003", [])
+    assert result.is_error, "unknown tool should return error"
+    assert "Unknown tool" in result.content
+
+check("tools.execute handles unknown tool gracefully", test_unknown_tool)
+
+
 # Report
 print()
 if errors:
