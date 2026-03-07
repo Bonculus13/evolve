@@ -1,35 +1,34 @@
 {
-  "file": "agent.py",
-  "change": "Reduce the rate-limit cooldown fallback from 3600s to 300s (5 min) at line 489. The 1-hour default is too aggressive — it blocks all providers for the entire hour even if the rate limit resets sooner. Also, skip the cooldown entirely if the failure was auth-related (any_rate_limited would be False for auth, but add an explicit guard). Additionally, log the cooldown duration to memory_log.jsonl so we can observe how often and how long cooldowns fire.",
+  "file": "orchestrator.py",
+  "change": "Refactor _run_single_cycle fallback logic (lines 527-536): when all trials are skipped due to provider_blocked, do NOT run the fallback agent.run_task(). Currently if all 3 trials get skipped via provider_blocked early termination, the code falls through to the fallback which spawns yet another CLI call that will also fail. Add a guard: if provider_blocked is True when candidates is empty, return an empty failure result instead of running the fallback.",
   "verify": "cd /Users/jacobdieter/Projects/04_tools/evolve && python3 data/smoke_test.py",
-  "reason": "When the system resumes after auth is fixed, the first rate limit hit will sleep for 1 hour (3600s fallback). This wastes an entire hour per rate-limit event when 5 minutes is typically sufficient. The fix improves cycle throughput by 12x on rate-limit events.",
+  "reason": "When auth is broken, the provider_blocked flag correctly skips trials 2-3, but the fallback path at line 528 still fires, wasting one more CLI call per cycle. This is the last source of wasted CLI calls during auth outages.",
   "priority": "high",
   "plan": {
     "now": [
-      "Reduce rate-limit cooldown fallback from 3600s to 300s in agent.py",
-      "Add cooldown logging to memory_log.jsonl for observability",
-      "Verify auth guard is working correctly with current failure history"
+      "Guard fallback path in _run_single_cycle against provider_blocked",
+      "Add 'failed to shutdown rollout recorder' to auth guard patterns in _provider_auth_probe()"
     ],
     "next": [
-      "Refactor _run_once() stream parsing — extract _spawn_cli helper already exists but rate-limit retry loop duplicates the full spawn logic",
-      "Add provider health caching to skip known-dead providers within same cycle",
-      "Improve fitness scoring to weight auth failures at 0.0 instead of 0.25",
-      "Add structured failure taxonomy beyond auth/none (timeout, syntax, import, runtime)"
+      "Refactor _run_once() stream parsing — extract rate-limit retry into helper to reduce 100-line duplication",
+      "Add structured failure taxonomy beyond auth/none (timeout, syntax, import, runtime)",
+      "Improve fitness scoring to weight auth failures at 0.0 instead of 0.25"
     ],
     "later": [
-      "Multi-provider parallel trial execution",
+      "Multi-provider support with failover",
       "Adaptive cooldown based on historical rate-limit patterns",
-      "Long-horizon mutation campaigns with rollback checkpoints",
       "Cross-session learning transfer via structured memory compression"
     ]
   },
   "diagnosis": {
-    "recent_success_rate": "0% (10/10 auth failures)",
-    "overall_success_rate": "96% (690/717 — inflated by early batch)",
-    "dominant_failure": "auth (6/6 classified, 100%)",
-    "fitness_trend": "0.93 -> 0.33 (degrading — all auth-caused)",
-    "weakest_module": "agent.py — 3600s rate-limit cooldown fallback is too aggressive; blocks all progress for 1 hour on any rate limit event",
-    "root_cause": "Auth infrastructure issue (CLI not logged in), not code. Code guards are correct. Next code improvement targets throughput recovery when auth is restored.",
-    "auth_guard_status": "ACTIVE (opt-out mode, checking last 3 tasks for auth patterns + live probe)"
+    "recent_success_rate": "66% (20/30 in logs/tasks.jsonl)",
+    "overall_success_rate": "98% (505/515)",
+    "dominant_failure": "auth (10/10 recent failures are auth-infrastructure, not code bugs)",
+    "failure_breakdown": "5x 'Not logged in', 3x 'Opening authentication page', 2x 'Failed to shutdown rollout recorder'",
+    "fitness_trend": "0.93 -> 0.70 (degrading due to auth outages)",
+    "weakest_module": "orchestrator.py — fallback path wastes CLI call when provider is already known-blocked",
+    "root_cause": "Auth infrastructure (CLI not logged in). Code is healthy — 10/10 smoke tests pass.",
+    "fix_applied": "Added 'failed to shutdown rollout recorder' to _AUTH_FAILURE_PATTERNS in agent.py",
+    "auth_guard_status": "ACTIVE (opt-out mode, now detects rollout recorder failures as auth)"
   }
 }

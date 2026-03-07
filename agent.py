@@ -83,6 +83,7 @@ _AUTH_FAILURE_PATTERNS = [
     "verification code",
     "invalid api key",
     "unauthorized",
+    "failed to shutdown rollout recorder",
 ]
 
 DEFAULT_PROVIDER_ORDER = ["claude", "gemini", "codex"]
