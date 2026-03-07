@@ -461,13 +461,20 @@ class EvolutionEngine:
     def record_cycle(self, *, cycle_type: str, fitness: float, success: bool, files_changed: list[str],
                      provider: str, failure_class: str, fingerprint: str) -> dict[str, Any]:
         self.state["cycle_count"] = int(self.state.get("cycle_count", 0)) + 1
+
+        # Infrastructure failures (auth, rate_limit) should not pollute fitness signals
+        infra_failure = failure_class in ("auth", "rate_limit")
+        effective_fitness = 0.0 if infra_failure else float(fitness)
+
         hist = self.state.setdefault("fitness_history", [])
-        hist.append(float(fitness))
+        hist.append(effective_fitness)
         if len(hist) > 500:
             del hist[:-500]
 
-        self.state["last_fitness"] = float(fitness)
-        self.update_bandit(cycle_type, fitness)
+        self.state["last_fitness"] = effective_fitness
+        # Don't update bandit with infra failures — they carry no signal about arm quality
+        if not infra_failure:
+            self.update_bandit(cycle_type, effective_fitness)
         self.update_capability_graph(files_changed, fitness)
         if fingerprint:
             fps = self.state.setdefault("regression_fingerprints", [])
@@ -484,7 +491,8 @@ class EvolutionEngine:
 
         summary = {
             "cycle_count": self.state["cycle_count"],
-            "fitness": fitness,
+            "fitness": effective_fitness,
+            "infra_failure": infra_failure,
             "stage": stage,
             "milestone_level": milestone["level"],
             "unlocked": milestone["unlocked"],

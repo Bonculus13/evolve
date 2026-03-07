@@ -1,34 +1,32 @@
 {
-  "file": "orchestrator.py",
-  "change": "Refactor _run_single_cycle fallback logic (lines 527-536): when all trials are skipped due to provider_blocked, do NOT run the fallback agent.run_task(). Currently if all 3 trials get skipped via provider_blocked early termination, the code falls through to the fallback which spawns yet another CLI call that will also fail. Add a guard: if provider_blocked is True when candidates is empty, return an empty failure result instead of running the fallback.",
+  "file": "agent.py",
+  "change": "Refactor _run_once() rate-limit retry logic (lines ~430-490) into a dedicated _retry_with_backoff() helper function. Currently the rate-limit detection, backoff sleep, and re-spawn logic is inlined in _run_once(), adding ~60 lines of complexity to an already 100-line function. Extract it into a helper that takes (prompt, env, provider, attempt) and returns the same (success, output_lines, tool_calls, final_text, proc, stderr) tuple. This reduces _run_once to ~50 lines and makes rate-limit behavior independently testable.",
   "verify": "cd /Users/jacobdieter/Projects/04_tools/evolve && python3 data/smoke_test.py",
-  "reason": "When auth is broken, the provider_blocked flag correctly skips trials 2-3, but the fallback path at line 528 still fires, wasting one more CLI call per cycle. This is the last source of wasted CLI calls during auth outages.",
+  "reason": "agent.py is the weakest module at 504 lines with _run_once containing duplicated rate-limit retry logic. Extracting a helper reduces complexity and enables targeted testing of backoff behavior.",
   "priority": "high",
   "plan": {
     "now": [
-      "Guard fallback path in _run_single_cycle against provider_blocked",
-      "Add 'failed to shutdown rollout recorder' to auth guard patterns in _provider_auth_probe()"
+      "Refactor _run_once() rate-limit retry into _retry_with_backoff() helper in agent.py"
     ],
     "next": [
-      "Refactor _run_once() stream parsing — extract rate-limit retry into helper to reduce 100-line duplication",
-      "Add structured failure taxonomy beyond auth/none (timeout, syntax, import, runtime)",
-      "Improve fitness scoring to weight auth failures at 0.0 instead of 0.25"
+      "Add structured failure taxonomy with per-class fitness weights beyond auth/unknown",
+      "Compress old fitness_history entries — add rolling window decay",
+      "Improve prompt_quality benchmark signal — currently static pre-auth"
     ],
     "later": [
-      "Multi-provider support with failover",
-      "Adaptive cooldown based on historical rate-limit patterns",
-      "Cross-session learning transfer via structured memory compression"
+      "Multi-provider failover (reduce auth-outage blast radius)",
+      "Cross-session learning transfer via structured memory compression",
+      "Adaptive cooldown based on historical rate-limit time-series patterns"
     ]
   },
   "diagnosis": {
-    "recent_success_rate": "66% (20/30 in logs/tasks.jsonl)",
-    "overall_success_rate": "98% (505/515)",
-    "dominant_failure": "auth (10/10 recent failures are auth-infrastructure, not code bugs)",
-    "failure_breakdown": "5x 'Not logged in', 3x 'Opening authentication page', 2x 'Failed to shutdown rollout recorder'",
-    "fitness_trend": "0.93 -> 0.70 (degrading due to auth outages)",
-    "weakest_module": "orchestrator.py — fallback path wastes CLI call when provider is already known-blocked",
-    "root_cause": "Auth infrastructure (CLI not logged in). Code is healthy — 10/10 smoke tests pass.",
-    "fix_applied": "Added 'failed to shutdown rollout recorder' to _AUTH_FAILURE_PATTERNS in agent.py",
-    "auth_guard_status": "ACTIVE (opt-out mode, now detects rollout recorder failures as auth)"
+    "recent_success_rate": "90% (recent 10), 96% (overall 726)",
+    "overall_success_rate": "96% (699/726)",
+    "dominant_failure": "auth-infrastructure (all recent failures)",
+    "fitness_trend": "0.93 -> 0.33 -> 0.67 (recovering, auth failures now scored 0.0)",
+    "weakest_module": "agent.py — 504 lines, _run_once has 100+ lines with inlined rate-limit retry",
+    "fix_applied": "Infra failures (auth/rate_limit) now get 0.0 fitness and skip bandit updates in evolution_engine.record_cycle()",
+    "smoke_tests": "28/28 passing",
+    "improvement_impact": "Prevents auth outages from dragging fitness EMA down and poisoning bandit arm selection"
   }
 }

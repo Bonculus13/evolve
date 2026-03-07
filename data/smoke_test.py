@@ -496,6 +496,51 @@ def test_volatility_bias():
 check("volatility biases cycle selection toward stabilize", test_volatility_bias)
 
 
+def test_infra_failure_fitness_zero():
+    from evolution_engine import EvolutionEngine
+    from pathlib import Path
+    import tempfile, json
+    tmp = Path(tempfile.mktemp(suffix=".json"))
+    tmp.write_text(json.dumps({"fitness_history": [0.8, 0.8]}))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        summary = engine.record_cycle(
+            cycle_type="mutate", fitness=0.65, success=False, files_changed=[],
+            provider="claude", failure_class="auth", fingerprint=""
+        )
+        assert summary["fitness"] == 0.0, f"auth failure should yield 0.0 fitness, got {summary['fitness']}"
+        assert summary["infra_failure"] is True
+        assert engine.state["fitness_history"][-1] == 0.0
+        # Bandit should NOT have been updated for auth failure
+        arms = engine.state.get("bandit", {}).get("arms", {})
+        mutate_arm = arms.get("mutate", {})
+        assert mutate_arm.get("n", 0) == 0, "bandit should not update on infra failure"
+    finally:
+        tmp.unlink(missing_ok=True)
+
+check("infra failures (auth/rate_limit) get 0.0 fitness and skip bandit", test_infra_failure_fitness_zero)
+
+
+def test_code_failure_preserves_fitness():
+    from evolution_engine import EvolutionEngine
+    from pathlib import Path
+    import tempfile, json
+    tmp = Path(tempfile.mktemp(suffix=".json"))
+    tmp.write_text(json.dumps({"fitness_history": [0.8]}))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        summary = engine.record_cycle(
+            cycle_type="mutate", fitness=0.55, success=False, files_changed=[],
+            provider="claude", failure_class="unknown", fingerprint=""
+        )
+        assert summary["fitness"] == 0.55, f"code failure should preserve fitness, got {summary['fitness']}"
+        assert summary["infra_failure"] is False
+    finally:
+        tmp.unlink(missing_ok=True)
+
+check("code failures preserve computed fitness in history", test_code_failure_preserves_fitness)
+
+
 # Report
 print()
 if errors:
