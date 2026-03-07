@@ -375,6 +375,71 @@ def test_adaptive_epsilon():
 check("evolution_engine.adaptive_epsilon modulation", test_adaptive_epsilon)
 
 
+# 23. fitness_ema returns smoothed value
+def test_fitness_ema():
+    from evolution_engine import EvolutionEngine
+    from pathlib import Path
+    import tempfile, json
+    tmp = Path(tempfile.mktemp(suffix=".json"))
+    tmp.write_text(json.dumps({"fitness_history": [0.3, 0.5, 0.7, 0.6, 0.8]}))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        ema = engine.fitness_ema()
+        assert isinstance(ema, float), f"expected float, got {type(ema)}"
+        assert 0.0 <= ema <= 1.0, f"ema {ema} out of range"
+        # EMA should be pulled toward recent high values
+        assert ema > 0.5, f"ema {ema} should be > 0.5 given upward trend"
+    finally:
+        tmp.unlink(missing_ok=True)
+    # Empty history
+    tmp.write_text(json.dumps({"fitness_history": []}))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        assert engine.fitness_ema() == 0.0, "empty history should return 0.0"
+    finally:
+        tmp.unlink(missing_ok=True)
+
+check("evolution_engine.fitness_ema smoothed value", test_fitness_ema)
+
+
+# 24. fitness_trend classifies direction correctly
+def test_fitness_trend():
+    from evolution_engine import EvolutionEngine
+    from pathlib import Path
+    import tempfile, json
+    tmp = Path(tempfile.mktemp(suffix=".json"))
+    # Improving
+    tmp.write_text(json.dumps({"fitness_history": [0.3, 0.4, 0.5, 0.6, 0.7]}))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        assert engine.fitness_trend() == "improving", f"expected improving, got {engine.fitness_trend()}"
+    finally:
+        tmp.unlink(missing_ok=True)
+    # Declining
+    tmp.write_text(json.dumps({"fitness_history": [0.8, 0.7, 0.6, 0.5, 0.4]}))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        assert engine.fitness_trend() == "declining", f"expected declining, got {engine.fitness_trend()}"
+    finally:
+        tmp.unlink(missing_ok=True)
+    # Flat
+    tmp.write_text(json.dumps({"fitness_history": [0.5, 0.5, 0.5, 0.5]}))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        assert engine.fitness_trend() == "flat", f"expected flat, got {engine.fitness_trend()}"
+    finally:
+        tmp.unlink(missing_ok=True)
+    # Insufficient data
+    tmp.write_text(json.dumps({"fitness_history": [0.5]}))
+    try:
+        engine = EvolutionEngine(state_file=tmp)
+        assert engine.fitness_trend() == "insufficient_data"
+    finally:
+        tmp.unlink(missing_ok=True)
+
+check("evolution_engine.fitness_trend direction classification", test_fitness_trend)
+
+
 # Report
 print()
 if errors:

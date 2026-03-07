@@ -145,6 +145,36 @@ class EvolutionEngine:
                 break
         return streak if direction else -streak
 
+    def fitness_ema(self, span: int = 8) -> float:
+        """Exponential Moving Average of fitness history. Smooths noise to reveal true trend."""
+        hist = self.state.get("fitness_history", [])
+        if not hist:
+            return 0.0
+        alpha = 2.0 / (span + 1)
+        ema = float(hist[0])
+        for v in hist[1:]:
+            ema = alpha * float(v) + (1.0 - alpha) * ema
+        return round(ema, 4)
+
+    def fitness_trend(self, window: int = 8) -> str:
+        """Classify recent fitness direction: 'improving', 'declining', or 'flat'."""
+        hist = self.state.get("fitness_history", [])
+        if len(hist) < 4:
+            return "insufficient_data"
+        recent = hist[-window:]
+        n = len(recent)
+        # Simple linear regression slope
+        x_mean = (n - 1) / 2.0
+        y_mean = sum(recent) / n
+        num = sum((i - x_mean) * (recent[i] - y_mean) for i in range(n))
+        den = sum((i - x_mean) ** 2 for i in range(n))
+        slope = num / den if den > 0 else 0.0
+        if slope > 0.01:
+            return "improving"
+        if slope < -0.01:
+            return "declining"
+        return "flat"
+
     def adaptive_epsilon(self) -> float:
         """Modulate exploration rate based on momentum. Winning streak -> exploit. Losing -> explore."""
         base = float(self.state.get("bandit", {}).get("epsilon", 0.18))
@@ -446,6 +476,8 @@ class EvolutionEngine:
             "provider": provider,
             "momentum": self.momentum(),
             "epsilon": round(self.adaptive_epsilon(), 4),
+            "fitness_ema": self.fitness_ema(),
+            "fitness_trend": self.fitness_trend(),
         }
         self.log_event({"ts": time.time(), "event": "cycle_recorded", **summary})
         self.save()

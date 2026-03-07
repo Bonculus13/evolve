@@ -698,13 +698,16 @@ def auto_evolve_loop(max_cycles: int | None = None, pause_s: int = 5) -> None:
         if len(LAST_RESULTS) > 100:
             del LAST_RESULTS[:-100]
 
-        momentum = cycle_result.get("summary", {}).get("momentum", 0)
-        eps = cycle_result.get("summary", {}).get("epsilon", 0.18)
+        summary = cycle_result.get("summary", {})
+        momentum = summary.get("momentum", 0)
+        eps = summary.get("epsilon", 0.18)
+        ema = summary.get("fitness_ema", 0.0)
+        trend = summary.get("fitness_trend", "?")
         streak_label = f"+{momentum}" if momentum > 0 else str(momentum)
         print(
             f"[CYCLE RESULT] type={cycle_result['cycle_type']} trial={cycle_result['selected_trial']} "
             f"success={cycle_result['success']} fitness={cycle_result['fitness']:.4f} "
-            f"momentum={streak_label} epsilon={eps:.2f}"
+            f"momentum={streak_label} epsilon={eps:.2f} ema={ema:.4f} trend={trend}"
         )
 
         if sync_every > 0 and cycle % sync_every == 0:
