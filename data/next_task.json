@@ -1,0 +1,35 @@
+{
+  "file": "agent.py",
+  "change": "Reduce the rate-limit cooldown fallback from 3600s to 300s (5 min) at line 489. The 1-hour default is too aggressive — it blocks all providers for the entire hour even if the rate limit resets sooner. Also, skip the cooldown entirely if the failure was auth-related (any_rate_limited would be False for auth, but add an explicit guard). Additionally, log the cooldown duration to memory_log.jsonl so we can observe how often and how long cooldowns fire.",
+  "verify": "cd /Users/jacobdieter/Projects/04_tools/evolve && python3 data/smoke_test.py",
+  "reason": "When the system resumes after auth is fixed, the first rate limit hit will sleep for 1 hour (3600s fallback). This wastes an entire hour per rate-limit event when 5 minutes is typically sufficient. The fix improves cycle throughput by 12x on rate-limit events.",
+  "priority": "high",
+  "plan": {
+    "now": [
+      "Reduce rate-limit cooldown fallback from 3600s to 300s in agent.py",
+      "Add cooldown logging to memory_log.jsonl for observability",
+      "Verify auth guard is working correctly with current failure history"
+    ],
+    "next": [
+      "Refactor _run_once() stream parsing — extract _spawn_cli helper already exists but rate-limit retry loop duplicates the full spawn logic",
+      "Add provider health caching to skip known-dead providers within same cycle",
+      "Improve fitness scoring to weight auth failures at 0.0 instead of 0.25",
+      "Add structured failure taxonomy beyond auth/none (timeout, syntax, import, runtime)"
+    ],
+    "later": [
+      "Multi-provider parallel trial execution",
+      "Adaptive cooldown based on historical rate-limit patterns",
+      "Long-horizon mutation campaigns with rollback checkpoints",
+      "Cross-session learning transfer via structured memory compression"
+    ]
+  },
+  "diagnosis": {
+    "recent_success_rate": "0% (10/10 auth failures)",
+    "overall_success_rate": "96% (690/717 — inflated by early batch)",
+    "dominant_failure": "auth (6/6 classified, 100%)",
+    "fitness_trend": "0.93 -> 0.33 (degrading — all auth-caused)",
+    "weakest_module": "agent.py — 3600s rate-limit cooldown fallback is too aggressive; blocks all progress for 1 hour on any rate limit event",
+    "root_cause": "Auth infrastructure issue (CLI not logged in), not code. Code guards are correct. Next code improvement targets throughput recovery when auth is restored.",
+    "auth_guard_status": "ACTIVE (opt-out mode, checking last 3 tasks for auth patterns + live probe)"
+  }
+}

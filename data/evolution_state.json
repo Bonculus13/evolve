@@ -1,10 +1,10 @@
 {
   "created_at": 1772828825.902176,
   "goal_pack": "utility",
-  "cycle_count": 16,
+  "cycle_count": 17,
   "curriculum_stage": "architecture",
   "milestone_level": 3,
-  "last_fitness": 0.3252,
+  "last_fitness": 0.6795,
   "fitness_history": [
     0.9325,
     0.9325,
@@ -21,7 +21,8 @@
     0.4625,
     0.4625,
     0.4625,
-    0.3252
+    0.3252,
+    0.6795
   ],
   "weekly_retrospectives": [
     {
@@ -59,8 +60,8 @@
         "reward": 3.1227
       },
       "assess": {
-        "n": 3,
-        "reward": 2.3275
+        "n": 4,
+        "reward": 3.007
       },
       "stabilize": {
         "n": 3,

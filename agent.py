@@ -77,11 +77,12 @@ _RATE_LIMIT_PATTERNS = [
 _AUTH_FAILURE_PATTERNS = [
     "not logged in",
     "please run /login",
-    "authentication",
-    "auth required",
     "login required",
     "opening authentication page in your browser",
     "do you want to continue?",
+    "verification code",
+    "invalid api key",
+    "unauthorized",
 ]
 
 DEFAULT_PROVIDER_ORDER = ["claude", "gemini", "codex"]
@@ -119,11 +120,11 @@ def _save_provider_state(active: str, reason: str = "", attempts: dict | None = 
         pass
 
 
-def _is_rate_limit_error(stderr: str, output_lines: list) -> bool:
+def _is_rate_limit_error(stderr: str, output_lines: list, final_text: str = "") -> bool:
     """Check if the error is a rate limit / overload error."""
-    if _is_auth_failure(stderr, output_lines):
+    if _is_auth_failure(stderr, output_lines, final_text):
         return False
-    text = (stderr + " " + " ".join(output_lines[-5:])).lower()
+    text = (stderr + " " + " ".join(output_lines[-5:]) + " " + (final_text or "")).lower()
     return any(p in text for p in _RATE_LIMIT_PATTERNS)
 
 
@@ -160,8 +161,100 @@ def _extract_reset_cooldown_seconds(text: str) -> int | None:
     return int((reset - now).total_seconds())
 
 
+def _spawn_cli(cmd: list, prompt: str, env: dict, provider: str) -> tuple[bool, list, list, str, object, str]:
+    """Internal helper to spawn a CLI process and parse its stream-json output."""
+    success = False
+    output_lines = []
+    tool_calls = []
+    final_text = ""
+    stderr = ""
+    proc = None
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            cwd=str(SOURCE_DIR),
+        )
+
+        if provider == "claude":
+            proc.stdin.write(prompt)
+        proc.stdin.close()
+
+        for raw_line in proc.stdout:
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+            output_lines.append(raw_line)
+
+            try:
+                event = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+
+            etype = event.get("type", "")
+
+            if etype == "assistant":
+                content = event.get("message", {}).get("content", [])
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "text":
+                            txt = block.get("text", "").strip()
+                            if txt:
+                                print(f"\n[{provider.capitalize()}] {txt[:500]}", flush=True)
+                                final_text = txt
+                        elif block.get("type") == "tool_use":
+                            name = block.get("name", "")
+                            inp = block.get("input", {})
+                            summary = str(inp)[:120]
+                            print(f"[TOOL] {name}({summary})", flush=True)
+                            tool_calls.append(name)
+
+            elif etype == "result":
+                result_type = event.get("subtype", "")
+                if result_type == "success":
+                    final_text = event.get("result", "")
+                    print(f"\n[RESULT] {final_text[:300]}", flush=True)
+                    success = True
+                elif result_type == "error_max_turns":
+                    print("[WARN] Max turns reached — task incomplete, marking as failure")
+                    success = False
+                else:
+                    print(f"[RESULT] {event}")
+            elif provider == "codex":
+                msg = event.get("message") or event.get("content") or event.get("output")
+                if isinstance(msg, str) and msg.strip():
+                    final_text = msg.strip()
+                elif isinstance(msg, list):
+                    for part in msg:
+                        if isinstance(part, dict):
+                            txt = part.get("text", "").strip()
+                            if txt:
+                                final_text = txt
+
+        stderr = proc.stderr.read()
+        proc.wait()
+
+        # Some CLIs return successful plain/JSON lines without a "result.success" event.
+        if not success and proc.returncode == 0 and output_lines and not _is_rate_limit_error(stderr, output_lines):
+            if not final_text:
+                final_text = output_lines[-1][:1000]
+            success = True
+
+    except Exception as e:
+        print(f"[ERROR] Spawning {provider} failed: {e}")
+        if proc:
+            proc.kill()
+
+    return success, output_lines, tool_calls, final_text, proc, stderr
+
+
 def _run_once(prompt: str, env: dict, label: str = "", provider: str = "claude") -> tuple[bool, list, list, str, object, str]:
-    """Run claude CLI with prompt. Returns (success, output_lines, tool_calls, final_text, proc, stderr).
+    """Run provider CLI with prompt. Returns (success, output_lines, tool_calls, final_text, proc, stderr).
     Retries up to CLI_RETRY_LIMIT times with CLI_RETRY_DELAY seconds between attempts on subprocess failure."""
     if provider == "claude":
         cmd = [
@@ -204,185 +297,23 @@ def _run_once(prompt: str, env: dict, label: str = "", provider: str = "claude")
         if cli_attempt > 0:
             print(f"[AGENT] CLI retry {cli_attempt}/{CLI_RETRY_LIMIT} after {CLI_RETRY_DELAY}s delay...", flush=True)
 
-        success = False
-        output_lines = []
-        tool_calls = []
-        final_text = ""
-        stderr = ""
-        proc = None
-        subprocess_failed = False
+        success, output_lines, tool_calls, final_text, proc, stderr = _spawn_cli(cmd, prompt, env, provider)
+        subprocess_failed = (proc.returncode not in (0, None) and not success) if proc else True
 
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=env,
-                cwd=str(SOURCE_DIR),
-            )
-
-            if provider == "claude":
-                proc.stdin.write(prompt)
-            proc.stdin.close()
-
-            for raw_line in proc.stdout:
-                raw_line = raw_line.strip()
-                if not raw_line:
-                    continue
-                output_lines.append(raw_line)
-
-                try:
-                    event = json.loads(raw_line)
-                except json.JSONDecodeError:
-                    print(f"  {raw_line}")
-                    continue
-
-                etype = event.get("type", "")
-
-                if etype == "assistant":
-                    content = event.get("message", {}).get("content", [])
-                    for block in content:
-                        if isinstance(block, dict):
-                            if block.get("type") == "text":
-                                txt = block.get("text", "").strip()
-                                if txt:
-                                    print(f"\n[Claude] {txt[:500]}", flush=True)
-                                    final_text = txt
-                            elif block.get("type") == "tool_use":
-                                name = block.get("name", "")
-                                inp = block.get("input", {})
-                                summary = str(inp)[:120]
-                                print(f"[TOOL] {name}({summary})", flush=True)
-                                tool_calls.append(name)
-
-                elif etype == "result":
-                    result_type = event.get("subtype", "")
-                    if result_type == "success":
-                        final_text = event.get("result", "")
-                        print(f"\n[RESULT] {final_text[:300]}", flush=True)
-                        success = True
-                    elif result_type == "error_max_turns":
-                        print("[WARN] Max turns reached — task incomplete, marking as failure")
-                        success = False
-                    else:
-                        print(f"[RESULT] {event}")
-                elif provider == "codex":
-                    # codex --json emits many event shapes; extract likely textual payloads.
-                    msg = event.get("message") or event.get("content") or event.get("output")
-                    if isinstance(msg, str) and msg.strip():
-                        final_text = msg.strip()
-                    elif isinstance(msg, list):
-                        for part in msg:
-                            if isinstance(part, dict):
-                                txt = part.get("text", "").strip()
-                                if txt:
-                                    final_text = txt
-
-            stderr = proc.stderr.read()
-            proc.wait()
-
-            if success and _is_auth_failure(stderr, output_lines, final_text):
-                print("[ERROR] Authentication/login required - marking task failed")
-                success = False
-
-            if not success and proc.returncode == 0 and output_lines and not _is_rate_limit_error(stderr, output_lines):
-                # Some CLIs return successful plain/JSON lines without a "result.success" event.
-                if not final_text:
-                    final_text = output_lines[-1][:1000]
-                success = True
-
-            if success and _is_auth_failure(stderr, output_lines, final_text):
-                print("[ERROR] Authentication/login required - marking task failed")
-                success = False
-
-            if proc.returncode not in (0, None) and not success:
-                print(f"[ERROR] {provider} exited {proc.returncode}")
-                if stderr:
-                    print(f"  stderr: {stderr[:300]}")
-                subprocess_failed = True
-
-        except Exception as e:
-            print(f"[ERROR] {e}")
-            subprocess_failed = True
+        if subprocess_failed and not success:
+            print(f"[ERROR] {provider} exited {proc.returncode if proc else 'N/A'}")
+            if stderr:
+                print(f"  stderr: {stderr[:300]}")
 
         # Check for rate limit errors — these get their own exponential backoff
-        if (subprocess_failed or not success) and _is_rate_limit_error(stderr, output_lines):
+        if (subprocess_failed or not success) and _is_rate_limit_error(stderr, output_lines, final_text):
             for rl_attempt, delay in enumerate(RATE_LIMIT_BACKOFFS):
                 print(f"[AGENT] Rate limit detected — backing off {delay}s "
                       f"(attempt {rl_attempt + 1}/{len(RATE_LIMIT_BACKOFFS)})...", flush=True)
                 time.sleep(delay)
-                success, output_lines, tool_calls, final_text, proc, stderr = (
-                    False, [], [], "", None, ""
-                )
-                try:
-                    proc = subprocess.Popen(
-                        cmd,
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        env=env,
-                        cwd=str(SOURCE_DIR),
-                    )
-                    if provider == "claude":
-                        proc.stdin.write(prompt)
-                    proc.stdin.close()
-                    for raw_line in proc.stdout:
-                        raw_line = raw_line.strip()
-                        if not raw_line:
-                            continue
-                        output_lines.append(raw_line)
-                        try:
-                            event = json.loads(raw_line)
-                        except json.JSONDecodeError:
-                            print(f"  {raw_line}")
-                            continue
-                        etype = event.get("type", "")
-                        if etype == "assistant":
-                            content = event.get("message", {}).get("content", [])
-                            for block in content:
-                                if isinstance(block, dict):
-                                    if block.get("type") == "text":
-                                        txt = block.get("text", "").strip()
-                                        if txt:
-                                            print(f"\n[Claude] {txt[:500]}", flush=True)
-                                            final_text = txt
-                                    elif block.get("type") == "tool_use":
-                                        name = block.get("name", "")
-                                        inp = block.get("input", {})
-                                        summary = str(inp)[:120]
-                                        print(f"[TOOL] {name}({summary})", flush=True)
-                                        tool_calls.append(name)
-                        elif etype == "result":
-                            result_type = event.get("subtype", "")
-                            if result_type == "success":
-                                final_text = event.get("result", "")
-                                print(f"\n[RESULT] {final_text[:300]}", flush=True)
-                                success = True
-                            elif result_type == "error_max_turns":
-                                print("[WARN] Max turns reached — task incomplete, marking as failure")
-                            else:
-                                print(f"[RESULT] {event}")
-                        elif provider == "codex":
-                            msg = event.get("message") or event.get("content") or event.get("output")
-                            if isinstance(msg, str) and msg.strip():
-                                final_text = msg.strip()
-                    stderr = proc.stderr.read()
-                    proc.wait()
-                    if success and _is_auth_failure(stderr, output_lines, final_text):
-                        print("[ERROR] Authentication/login required - marking task failed")
-                        success = False
-                    if proc.returncode not in (0, None) and not success:
-                        print(f"[ERROR] {provider} exited {proc.returncode}")
-                        if stderr:
-                            print(f"  stderr: {stderr[:300]}")
-                except Exception as e:
-                    print(f"[ERROR] {e}")
-
+                success, output_lines, tool_calls, final_text, proc, stderr = _spawn_cli(cmd, prompt, env, provider)
                 # If succeeded or no longer a rate limit error, stop backing off
-                if success or not _is_rate_limit_error(stderr, output_lines):
+                if success or not _is_rate_limit_error(stderr, output_lines, final_text):
                     break
             # After rate limit retries, return whatever we have
             break
@@ -505,7 +436,7 @@ def run_task(task: str, max_retries: int = TROUBLESHOOTING_RETRY_LIMIT) -> dict:
         if success:
             _save_provider_state(provider, "task_succeeded", attempts_by_provider)
             break
-        if _is_rate_limit_error(stderr, output_lines):
+        if _is_rate_limit_error(stderr, output_lines, final_text):
             any_rate_limited = True
             rate_limit_text = ((final_text or "") + "\n" + (stderr or "") + "\n" + "\n".join(output_lines[-8:])).strip()
             _save_provider_state(provider, "rate_limited_failover", attempts_by_provider)

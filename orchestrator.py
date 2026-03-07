@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -79,6 +80,68 @@ ORCHESTRATOR_CAPABILITY_TAGS = [
     "fitness_optimization",
     "timeline_visualization",
 ]
+
+
+def _provider_probe(provider: str) -> dict:
+    cmd = []
+    prompt = "Reply with OK only."
+    if provider == "claude":
+        exe = agent.CLAUDE_BIN
+        cmd = [exe, "--print"]
+    elif provider == "gemini":
+        exe = agent.GEMINI_BIN
+        cmd = [exe, "--prompt", prompt]
+    elif provider == "codex":
+        exe = agent.CODEX_BIN
+        cmd = [exe, "exec", "--skip-git-repo-check", "--cd", str(Path(__file__).parent), "--json", prompt]
+    else:
+        return {"provider": provider, "available": False, "ready": False, "reason": "unknown provider"}
+
+    available = bool(shutil.which(exe) or shutil.which(Path(exe).name))
+    if not available:
+        return {"provider": provider, "available": False, "ready": False, "reason": "binary not found"}
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=prompt if provider == "claude" else None,
+            capture_output=True,
+            text=True,
+            cwd=str(Path(__file__).parent),
+            timeout=25,
+        )
+        combined = (proc.stdout + "\n" + proc.stderr).lower()
+        if "not logged in" in combined or "please run /login" in combined:
+            return {"provider": provider, "available": True, "ready": False, "reason": "auth required"}
+        if "opening authentication page in your browser" in combined or "do you want to continue?" in combined:
+            return {"provider": provider, "available": True, "ready": False, "reason": "interactive auth prompt"}
+        if "panicked" in combined and "reqwest-internal-sync-runtime" in combined:
+            return {"provider": provider, "available": True, "ready": False, "reason": "runtime panic in sandbox"}
+        if proc.returncode != 0:
+            return {"provider": provider, "available": True, "ready": False, "reason": f"exit {proc.returncode}"}
+        return {"provider": provider, "available": True, "ready": True, "reason": "ok"}
+    except subprocess.TimeoutExpired:
+        return {"provider": provider, "available": True, "ready": False, "reason": "timeout"}
+    except Exception as e:
+        return {"provider": provider, "available": True, "ready": False, "reason": str(e)}
+
+
+def preflight_providers() -> int:
+    providers = ["claude", "gemini", "codex"]
+    print("=== PROVIDER PREFLIGHT ===")
+    results = [_provider_probe(p) for p in providers]
+    for r in results:
+        status = "READY" if r.get("ready") else "BLOCKED"
+        print(f"- {r['provider']}: {status} ({r.get('reason', 'unknown')})")
+
+    ready = [r["provider"] for r in results if r.get("ready")]
+    if ready:
+        os.environ["EVOLVE_PROVIDER_ORDER"] = ",".join(ready + [p for p in providers if p not in ready])
+        print(f"Recommended EVOLVE_PROVIDER_ORDER={os.environ['EVOLVE_PROVIDER_ORDER']}")
+        return 0
+
+    print("No ready providers detected. Authenticate at least one provider before auto-evolve.")
+    return 1
 
 
 def _pop_task() -> str | None:
@@ -325,7 +388,7 @@ def _apply_provider_policy() -> None:
 
 def _auth_guard_active() -> bool:
     """Stop autonomous loops when provider auth is clearly missing."""
-    if os.environ.get("EVOLVE_AUTH_GUARD", "0") != "1":
+    if os.environ.get("EVOLVE_AUTH_GUARD", "1") == "0":
         return False
     history = mem.get_all().get("task_history", [])
     recent = history[-3:]
@@ -334,7 +397,7 @@ def _auth_guard_active() -> bool:
     failed = [r for r in recent if not r.get("success")]
     if len(failed) < 2:
         return False
-    suspected = all("/login" in str(r.get("notes", "")).lower() or "not logged in" in str(r.get("notes", "")).lower() for r in failed[-2:])
+    suspected = all("/login" in str(r.get("notes", "")).lower() or "not logged in" in str(r.get("notes", "")).lower() or "authentication" in str(r.get("notes", "")).lower() for r in failed[-2:])
     if not suspected:
         return False
     return not _provider_auth_probe()
@@ -356,7 +419,14 @@ def _provider_auth_probe() -> bool:
             timeout=20,
         )
         combined = (proc.stdout + "\n" + proc.stderr).lower()
-        ok = "not logged in" not in combined and "please run /login" not in combined and proc.returncode == 0
+        # Auth is 'ok' only if no patterns suggest a blocking prompt or missing session.
+        ok = (
+            "not logged in" not in combined and 
+            "please run /login" not in combined and 
+            "opening authentication page" not in combined and 
+            "do you want to continue" not in combined and
+            proc.returncode == 0
+        )
     except Exception:
         ok = False
     _AUTH_PROBE_CACHE["ts"] = now
@@ -732,6 +802,9 @@ def main() -> None:
     if "--status" in args:
         print_status()
         return
+
+    if "--preflight-providers" in args:
+        sys.exit(preflight_providers())
 
     if "--goal-pack" in args:
         idx = args.index("--goal-pack")
